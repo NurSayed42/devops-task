@@ -11,4 +11,6 @@ htmlcov/
 .env
 health_log.txt*
 *.tfstate*
+tfplan
+*.tfplan
 .terraform/

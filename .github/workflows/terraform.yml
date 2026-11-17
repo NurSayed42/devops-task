@@ -92,7 +92,15 @@ jobs:
             cat trivy-iac.txt 2>/dev/null || echo "No report produced."
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          # Also surface each finding as an annotation so it shows on the PR.
-          grep -E '^(AWS|AVD)-' trivy-iac.txt 2>/dev/null | while read -r line; do
-            echo "::warning title=Trivy IaC::${line}"
-          done || true
+          # Surface each finding as an annotation on the offending file and line
+          # (the table prints "ID (SEVERITY): title" followed by " path.tf:start-end").
+          [ -f trivy-iac.txt ] || exit 0
+          awk '
+            /^(AVD-)?[A-Z]+-[0-9]+ \((LOW|MEDIUM|HIGH|CRITICAL)\):/ { finding = $0; next }
+            finding != "" && match($0, /^ *[^ ]+\.tf:[0-9]+/) {
+              loc = substr($0, RSTART, RLENGTH); gsub(/ /, "", loc)
+              split(loc, part, ":")
+              printf "::warning file=terraform/%s,line=%s,title=Trivy IaC::%s (%s)\n", part[1], part[2], finding, loc
+              finding = ""
+            }
+          ' trivy-iac.txt

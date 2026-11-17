@@ -1,0 +1,111 @@
+"""Hello-world FastAPI service for the DevOps assessment."""
+
+import logging
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from app.config import get_settings
+from app.logging_config import setup_logging
+from app.metrics import APP_INFO, ERROR_COUNT, REQUEST_COUNT, REQUEST_LATENCY
+
+settings = get_settings()
+setup_logging(settings.log_level, settings.environment)
+logger = logging.getLogger("app")
+
+state = {"ready": False}
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    APP_INFO.labels(version=settings.app_version, env=settings.environment).set(1)
+    state["ready"] = True
+    logger.info("application started", extra={"version": settings.app_version, "port": settings.port})
+    yield
+    # Runs when uvicorn receives SIGTERM/SIGINT: it stops accepting new
+    # connections, drains in-flight requests, then calls this.
+    state["ready"] = False
+    logger.info("shutdown signal received, application stopped cleanly")
+
+
+app = FastAPI(title="DevOps Task API", version=settings.app_version, lifespan=lifespan)
+
+
+def _route_path(request: Request) -> str:
+    """Use the route template (not the raw URL) to keep metric cardinality low."""
+    route = request.scope.get("route")
+    return getattr(route, "path", "unmatched")
+
+
+@app.middleware("http")
+async def observe_requests(request: Request, call_next):
+    start = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    except Exception:
+        logger.exception("unhandled exception", extra={"path": request.url.path})
+        raise
+    finally:
+        duration = time.perf_counter() - start
+        path = _route_path(request)
+        method = request.method
+        if path != "/metrics":
+            REQUEST_COUNT.labels(method, path, str(status)).inc()
+            REQUEST_LATENCY.labels(method, path).observe(duration)
+            if status >= 500:
+                ERROR_COUNT.labels(method, path).inc()
+        logger.info(
+            "request completed",
+            extra={
+                "method": method,
+                "path": path,
+                "status": status,
+                "duration_ms": round(duration * 1000, 2),
+                "client_ip": request.client.host if request.client else None,
+            },
+        )
+
+
+@app.get("/")
+async def root():
+    return {
+        "message": "Hello from DevOps Task!",
+        "status": "running",
+        "version": settings.app_version,
+    }
+
+
+@app.get("/health")
+async def health():
+    if not state["ready"]:
+        return JSONResponse(status_code=503, content={"status": "starting"})
+    return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+def run() -> None:
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=settings.port,
+        log_config=None,  # keep our JSON logging
+        access_log=False,
+        timeout_graceful_shutdown=20,
+        proxy_headers=True,
+    )
+
+
+if __name__ == "__main__":
+    run()

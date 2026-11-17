@@ -56,9 +56,9 @@ docker compose ps             # shows (healthy)
 
 ## Dockerfile notes
 - **Multi-stage**: builder installs deps into `/install`; runtime copies only that + `app/`.
-- **Base pinned**: `python:3.12.8-alpine3.21` (pin to a digest in CI with `docker buildx imagetools inspect`).
-- **Minimal**: Alpine; pip/setuptools removed from the final image.
-- **Non-root**: UID/GID `10001`.
+- **Base pinned**: `python:3.12.16-alpine3.24@sha256:c5ba3dee…` — version tag for readability, multi-arch index digest for immutability.
+- **Minimal**: Alpine; pip removed from the final image.
+- **Non-root**: UID/GID `10001`. App code is root-owned, so the runtime user can read but not modify it.
 - **HEALTHCHECK** uses Python's `urllib` (no curl needed).
 - **OCI labels** with version, git SHA, and build date passed as build args.
 - Compose also runs it `read_only` with `/tmp` as tmpfs, `no-new-privileges`, CPU/memory limits, and `restart: unless-stopped`.

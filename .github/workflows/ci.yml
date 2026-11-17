@@ -88,3 +88,113 @@ jobs:
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt \
             koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
             --severity=style "${scripts[@]}"
+
+  build-scan:
+    name: Build, smoke test & Trivy scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE: devops-task-api:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Set build date
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Build image (amd64, loaded into the local daemon)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          build-args: |
+            APP_VERSION=0.0.0-ci
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,scope=ci,mode=max
+
+      - name: Container smoke test & graceful shutdown
+        run: |
+          docker run -d --name app --read-only --tmpfs /tmp -p 8080:8080 "$IMAGE"
+
+          # Wait for the image's own HEALTHCHECK to report healthy.
+          status=starting
+          for _ in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          echo "Container health: $status"
+          if [ "$status" != healthy ]; then docker logs app; exit 1; fi
+
+          # Capture before grepping: `curl | grep -q` can SIGPIPE under pipefail.
+          root=$(curl -fsS localhost:8080/)
+          echo "GET / -> $root"
+          grep -q '"status":"running"' <<<"$root"
+          curl -fsS localhost:8080/health
+          metrics=$(curl -fsS localhost:8080/metrics)
+          grep -q '^http_request_duration_seconds_bucket' <<<"$metrics"
+
+          uid=$(docker exec app id -u)
+          echo "Running as UID $uid"
+          [ "$uid" = 10001 ]
+
+          # SIGTERM must drain and exit on its own; 137 would mean Docker had to SIGKILL it.
+          docker stop --time 30 app
+          code=$(docker inspect -f '{{.State.ExitCode}}' app)
+          logs=$(docker logs app 2>&1)
+          tail -n 3 <<<"$logs"
+          echo "Exit code after SIGTERM: $code"
+          grep -q "stopped cleanly" <<<"$logs"
+          [ "$code" -ne 137 ]
+
+      - name: Report image size
+        run: |
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          {
+            echo "### Image"
+            echo "Final image size (uncompressed): **$((size / 1024 / 1024)) MB**"
+          } >> "$GITHUB_STEP_SUMMARY"
+          docker image ls "${IMAGE%%:*}"
+
+      - name: Trivy report (HIGH + CRITICAL, informational)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          version: v0.76.2
+          severity: HIGH,CRITICAL
+          format: table
+          output: trivy-report.txt
+          exit-code: "0"
+
+      - name: Publish Trivy report to job summary
+        if: always()
+        run: |
+          {
+            echo "### Trivy scan (HIGH + CRITICAL)"
+            echo '```'
+            cat trivy-report.txt 2>/dev/null || echo "No report produced."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Security gate: any CRITICAL finding (fixed or not) fails the build.
+      # Exceptions must be justified in .trivyignore with an expiry date.
+      - name: Trivy gate (fail on CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          version: v0.76.2
+          skip-setup-trivy: true
+          severity: CRITICAL
+          ignore-unfixed: false
+          format: table
+          exit-code: "1"
+        env:
+          TRIVY_SKIP_DB_UPDATE: true
+          TRIVY_SKIP_JAVA_DB_UPDATE: true

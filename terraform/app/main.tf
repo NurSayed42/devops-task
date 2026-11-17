@@ -77,6 +77,14 @@ resource "aws_vpc_security_group_ingress_rule" "app" {
 # Everything the host talks to (ECR, S3 image layers, CloudWatch Logs, SSM,
 # the Amazon Linux repos) is HTTPS. DNS, NTP and IMDS are link-local / VPC
 # resolver traffic, which security groups don't filter.
+#
+# Accepted Trivy finding AWS-0104 (unrestricted egress): the destinations are
+# public AWS service endpoints with large, changing IP ranges, so a CIDR
+# allow-list is not maintainable; egress is already limited to tcp/443. The
+# real fix is private subnets + VPC endpoints (ecr.api, ecr.dkr, s3, logs, ssm,
+# ssmmessages, ec2messages): six interface endpoints at ~$7-8/month each cost
+# several times this t3.micro. Revisit together with a dedicated VPC.
+#trivy:ignore:AWS-0104
 resource "aws_vpc_security_group_egress_rule" "https" {
   security_group_id = aws_security_group.app.id
   description       = "HTTPS to AWS APIs and package repositories"

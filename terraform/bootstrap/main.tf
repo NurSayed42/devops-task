@@ -20,6 +20,14 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
+# Accepted Trivy finding AWS-0132 (no customer-managed KMS key): SSE-S3 already
+# encrypts state at rest, and access is limited by IAM, the TLS-only bucket
+# policy and the public access block. A CMK would add its own key policy and a
+# CloudTrail record per decrypt, but costs $1/month and every backend would
+# need `kms_key_id` (with only `encrypt = true` the S3 backend writes SSE-S3
+# anyway). These states hold no secrets (no generated passwords or keys), so
+# SSE-S3 is sufficient. Switch to SSE-KMS if secrets ever end up in state.
+#trivy:ignore:AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 

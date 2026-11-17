@@ -195,12 +195,14 @@ collect_disks() {
   local fs type size used avail capacity mount opts ro
   # Read-only mounts (images, snaps) are often 100% "full" by design and can't
   # fill up further: they are reported but not alerted on.
+  # PID 1's mount table, not our own: under systemd sandboxing
+  # (ProtectSystem=strict) this process sees every filesystem as read-only.
   local -A read_only=()
   while read -r _ mount _ opts _; do
     if [[ ,$opts, == *,ro,* ]]; then
       read_only[$mount]=1
     fi
-  done </proc/self/mounts
+  done < <(cat /proc/1/mounts 2>/dev/null || cat /proc/self/mounts)
 
   # timeout: a hung NFS mount must not hang the health check. df exits non-zero
   # if a single mount is unreadable; the rest of its output is still valid.

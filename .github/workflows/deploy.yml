@@ -1,0 +1,75 @@
+name: Deploy
+
+# One deploy implementation, used two ways:
+#  - called by the release workflow after a new image is pushed
+#  - run by hand (Actions > Deploy > Run workflow) to redeploy any existing
+#    version, i.e. roll back to a known-good release. Tags are immutable, so
+#    "0.1.41" is exactly the image that was tested as 0.1.41.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      version:
+        description: Existing image tag to deploy (e.g. 0.1.41)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC token -> the environment's deploy role
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.version }} to ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The GitHub Environment provides AWS_DEPLOY_ROLE_ARN, its protection rules
+    # (e.g. required reviewers for production), and the OIDC subject the role trusts.
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.deploy.outputs.url }}
+    # Never run two deploys against the same host at once; queue instead.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assume the ${{ inputs.environment }} deploy role (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: deploy-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Resolve image
+        id: image
+        env:
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must be MAJOR.MINOR.PATCH, got '$VERSION'"; exit 1; }
+          account=$(aws sts get-caller-identity --query Account --output text)
+          echo "uri=${account}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy, smoke test, roll back on failure
+        id: deploy
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE: ${{ steps.image.outputs.uri }}
+          VERSION: ${{ inputs.version }}
+        run: ./scripts/ci-deploy.sh "$ENVIRONMENT" "$IMAGE" "$VERSION"

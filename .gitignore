@@ -6,6 +6,7 @@ venv/
 .ruff_cache/
 .coverage
 coverage.xml
+junit.xml
 htmlcov/
 .env
 health_log.txt*

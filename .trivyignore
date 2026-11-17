@@ -1,0 +1,7 @@
+# Trivy ignore list. CVEs listed here do NOT fail the CI security gate.
+#
+# Policy: keep this empty whenever possible. An entry is only allowed when
+#   1. no fixed version exists upstream, or the vulnerable code path is not
+#      reachable in this service (explain which), and
+#   2. it carries an expiry date so it is re-reviewed, e.g.
+#        CVE-2026-12345 exp:2026-12-31   # reason, owner

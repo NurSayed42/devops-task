@@ -1,0 +1,200 @@
+name: CI
+
+# Runs on every PR, and is also called by the release workflow so that main is
+# gated by exactly the same checks before anything is pushed or deployed.
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint-test:
+    name: Lint & unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check --output-format=github app tests
+
+      - name: Ruff format check
+        run: ruff format --check app tests
+
+      - name: Unit tests (fails below 85% coverage)
+        run: pytest --cov-report=xml --junitxml=junit.xml
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "### Test coverage"
+            python -m coverage report --format=markdown
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage & test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            junit.xml
+          retention-days: 14
+
+  # Linters run from their official images, pinned by digest, rather than
+  # through third-party actions: fewer moving parts in the supply chain.
+  dockerfile-shell-lint:
+    name: Hadolint & ShellCheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Hadolint (Dockerfile)
+        run: |
+          docker run --rm -i \
+            hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d \
+            < Dockerfile
+
+      - name: ShellCheck (every tracked *.sh)
+        run: |
+          mapfile -t scripts < <(git ls-files '*.sh')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "No shell scripts to check."
+            exit 0
+          fi
+          printf 'Checking %s\n' "${scripts[@]}"
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt \
+            koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+            --severity=style "${scripts[@]}"
+
+  build-scan:
+    name: Build, smoke test & Trivy scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE: devops-task-api:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Set build date
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Build image (amd64, loaded into the local daemon)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          build-args: |
+            APP_VERSION=0.0.0-ci
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,scope=ci,mode=max
+
+      - name: Container smoke test & graceful shutdown
+        run: |
+          docker run -d --name app --read-only --tmpfs /tmp -p 8080:8080 "$IMAGE"
+
+          # Wait for the image's own HEALTHCHECK to report healthy.
+          status=starting
+          for _ in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          echo "Container health: $status"
+          if [ "$status" != healthy ]; then docker logs app; exit 1; fi
+
+          # Capture before grepping: `curl | grep -q` can SIGPIPE under pipefail.
+          root=$(curl -fsS localhost:8080/)
+          echo "GET / -> $root"
+          grep -q '"status":"running"' <<<"$root"
+          curl -fsS localhost:8080/health
+          metrics=$(curl -fsS localhost:8080/metrics)
+          grep -q '^http_request_duration_seconds_bucket' <<<"$metrics"
+
+          uid=$(docker exec app id -u)
+          echo "Running as UID $uid"
+          [ "$uid" = 10001 ]
+
+          # SIGTERM must drain and exit on its own; 137 would mean Docker had to SIGKILL it.
+          docker stop --time 30 app
+          code=$(docker inspect -f '{{.State.ExitCode}}' app)
+          logs=$(docker logs app 2>&1)
+          tail -n 3 <<<"$logs"
+          echo "Exit code after SIGTERM: $code"
+          grep -q "stopped cleanly" <<<"$logs"
+          [ "$code" -ne 137 ]
+
+      - name: Report image size
+        run: |
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          {
+            echo "### Image"
+            echo "Final image size (uncompressed): **$((size / 1024 / 1024)) MB**"
+          } >> "$GITHUB_STEP_SUMMARY"
+          docker image ls "${IMAGE%%:*}"
+
+      - name: Trivy report (HIGH + CRITICAL, informational)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          version: v0.76.2
+          severity: HIGH,CRITICAL
+          format: table
+          output: trivy-report.txt
+          exit-code: "0"
+
+      - name: Publish Trivy report to job summary
+        if: always()
+        run: |
+          {
+            echo "### Trivy scan (HIGH + CRITICAL)"
+            echo '```'
+            cat trivy-report.txt 2>/dev/null || echo "No report produced."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Security gate: any CRITICAL finding (fixed or not) fails the build.
+      # Exceptions must be justified in .trivyignore with an expiry date.
+      - name: Trivy gate (fail on CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          version: v0.76.2
+          skip-setup-trivy: true
+          severity: CRITICAL
+          ignore-unfixed: false
+          format: table
+          exit-code: "1"
+        env:
+          TRIVY_SKIP_DB_UPDATE: true
+          TRIVY_SKIP_JAVA_DB_UPDATE: true

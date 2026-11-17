@@ -18,7 +18,9 @@ resource "aws_iam_role" "instance" {
 }
 
 # Lets SSM Run Command (deploys) and Session Manager (shell access, instead of
-# SSH) reach the instance. AWS-managed and scoped to the SSM agent's needs.
+# SSH) reach the instance. AWS-managed and scoped to the SSM agent's needs; it
+# also grants ssm:GetParameter, which the boot script uses to read the
+# release-image parameter.
 resource "aws_iam_role_policy_attachment" "ssm_core" {
   role       = aws_iam_role.instance.name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
@@ -114,6 +116,13 @@ data "aws_iam_policy_document" "deploy" {
       aws_instance.app.arn,
       "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}::document/AWS-RunShellScript",
     ]
+  }
+
+  # Record what is now released, so a replacement host boots into it.
+  statement {
+    sid       = "RecordRelease"
+    actions   = ["ssm:PutParameter"]
+    resources = [aws_ssm_parameter.release_image.arn]
   }
 
   # These calls do not support resource-level permissions.

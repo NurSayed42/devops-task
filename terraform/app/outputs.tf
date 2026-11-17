@@ -14,6 +14,11 @@ output "log_group_name" {
   value = aws_cloudwatch_log_group.app.name
 }
 
+output "release_parameter_name" {
+  description = "SSM parameter holding the image currently released to this environment."
+  value       = aws_ssm_parameter.release_image.name
+}
+
 output "deploy_role_arn" {
   description = "Set as AWS_DEPLOY_ROLE_ARN in the GitHub Environment named after var.environment."
   value       = aws_iam_role.deploy.arn

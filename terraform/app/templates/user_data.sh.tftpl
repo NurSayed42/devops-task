@@ -27,9 +27,13 @@ EOF
 echo '${deploy_script_b64}' | base64 -d > /usr/local/bin/deploy-app
 chmod 0755 /usr/local/bin/deploy-app
 
-%{ if image_uri != "" ~}
-/usr/local/bin/deploy-app '${image_uri}'
-%{ else ~}
-echo "No image_tag given: the release pipeline will perform the first deploy."
-%{ endif ~}
+# Start whatever is currently released to this environment (if anything), so a
+# replaced host comes back on the right version without waiting for CI.
+release_image=$(aws ssm get-parameter --region '${aws_region}' --name '${release_parameter}' \
+  --query Parameter.Value --output text)
+if [ "$release_image" = "none" ]; then
+  echo "Nothing released yet: the release pipeline will perform the first deploy."
+else
+  /usr/local/bin/deploy-app "$release_image"
+fi
 echo "Bootstrap finished"

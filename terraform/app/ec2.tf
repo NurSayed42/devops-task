@@ -18,7 +18,7 @@ resource "aws_instance" "app" {
     log_level         = var.app_log_level
     log_group         = aws_cloudwatch_log_group.app.name
     host_port         = var.app_port
-    image_uri         = local.image_uri
+    release_parameter = aws_ssm_parameter.release_image.name
     deploy_script_b64 = base64encode(file("${path.module}/../../scripts/deploy.sh"))
   })
   # Bootstrap changes take effect by replacing the host (immutable server).

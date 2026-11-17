@@ -74,7 +74,7 @@ variable "ecr_repository_name" {
 }
 
 variable "image_tag" {
-  description = "Image tag to start at first boot. Leave empty to let the release pipeline do the first deploy."
+  description = "Initial value of the release-image parameter (image tag started at boot). Leave empty to let the release pipeline do the first deploy."
   type        = string
   default     = ""
 }

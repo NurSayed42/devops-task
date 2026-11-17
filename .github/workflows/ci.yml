@@ -89,6 +89,30 @@ jobs:
             koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
             --severity=style "${scripts[@]}"
 
+  health-script:
+    name: system_health.sh tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run test suite
+        run: bash scripts/tests/test_system_health.sh
+
+      - name: Sample report (job summary)
+        run: |
+          set +e # a WARNING/CRITICAL exit code is a result here, not a failure
+          bash scripts/system_health.sh --log-file "$RUNNER_TEMP/health_log.txt" > report.txt
+          echo "Exit code: $?"
+          {
+            echo "### system_health.sh on the CI runner"
+            echo '```'
+            cat report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build-scan:
     name: Build, smoke test & Trivy scan
     runs-on: ubuntu-24.04

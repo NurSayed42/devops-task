@@ -1,0 +1,188 @@
+name: Release
+
+# main -> same CI gates as PRs -> multi-arch image in ECR -> staging ->
+# (optional, approval-gated) production. Every step authenticates to AWS with
+# short-lived OIDC credentials; no AWS keys are stored in GitHub.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+permissions:
+  contents: read
+
+# Releases go out one at a time in push order; never cancel one mid-deploy.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    name: Build & push multi-arch image
+    needs: ci
+    # Until the AWS side exists (terraform apply + repository variables), main
+    # still gets CI but nothing is pushed or deployed.
+    if: vars.AWS_ECR_PUSH_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC token -> ECR push role
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Semantic version = MAJOR.MINOR from the VERSION file (bumped in a
+      # reviewed PR) + the run number as PATCH: unique and increasing per release.
+      - name: Compute version
+        id: version
+        run: |
+          base=$(tr -d '[:space:]' < VERSION)
+          if [[ ! $base =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=VERSION::VERSION must contain MAJOR.MINOR, got '$base'"
+            exit 1
+          fi
+          version="${base}.${GITHUB_RUN_NUMBER}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${version}"
+
+      - name: Assume the ECR push role (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: release-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      # Tags are immutable in ECR, so a re-run of this job must not try to push
+      # the same version again.
+      - name: Check whether this version was already pushed
+        id: exists
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${ECR_REPOSITORY}:${VERSION} already exists; reusing it."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU (arm64 emulation)
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Set build date
+        if: steps.exists.outputs.exists == 'false'
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Build and push linux/amd64 + linux/arm64
+        id: build
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.version }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.sha_tag }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          # Reuse layers from previous releases and from the PR builds.
+          cache-from: |
+            type=gha,scope=release
+            type=gha,scope=ci
+          cache-to: type=gha,scope=release,mode=max
+          # Supply-chain metadata stored next to the image: build provenance + SBOM.
+          provenance: mode=max
+          sbom: true
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_TAG: ${{ steps.version.outputs.sha_tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Image"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Repository | \`${ECR_REPOSITORY}\` |"
+            echo "| Tags | \`${VERSION}\`, \`${SHA_TAG}\` |"
+            echo "| Digest | \`${DIGEST:-unchanged (already pushed)}\` |"
+            echo "| Platforms | linux/amd64, linux/arm64 |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  tag:
+    name: Tag release in git
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the v<version> tag
+    steps:
+      - name: Tag ${{ needs.build.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::notice::tag v${VERSION} already exists (re-run)"
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/v${VERSION}" -f sha="${GITHUB_SHA}" >/dev/null
+          echo "Tagged ${GITHUB_SHA::7} as v${VERSION}"
+
+  deploy-staging:
+    name: Staging
+    needs: build
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: staging
+      version: ${{ needs.build.outputs.version }}
+
+  deploy-production:
+    name: Production
+    needs: [build, deploy-staging]
+    # Opt-in (repository variable DEPLOY_PRODUCTION=true) so the pipeline works
+    # with only a staging host. The "production" GitHub Environment should
+    # require a reviewer: that is the manual approval gate before production.
+    if: vars.DEPLOY_PRODUCTION == 'true'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: production
+      version: ${{ needs.build.outputs.version }}

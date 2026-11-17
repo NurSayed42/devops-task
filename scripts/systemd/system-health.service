@@ -1,0 +1,40 @@
+[Unit]
+Description=Server health check (CPU, memory, disk, load, top processes)
+Documentation=https://github.com/NurSayed42/devops-task/blob/main/docs/system-health.md
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# Optional overrides, e.g.:
+#   HEALTH_ARGS=--disk 85 --disk-crit 95 --json
+#   HEALTH_WEBHOOK_URL=https://hooks.slack.com/services/...
+EnvironmentFile=-/etc/default/system-health
+ExecStart=/usr/local/bin/system_health.sh --log-file /var/log/system-health/health_log.txt $HEALTH_ARGS
+# 1 (WARNING) and 2 (CRITICAL) are check results, not a broken unit. Only
+# 3 (UNKNOWN: the check itself failed) marks the run as failed.
+SuccessExitStatus=1 2
+
+# Least privilege: a throwaway unprivileged user, a read-only view of the OS,
+# and write access to its own log directory only. Reading /proc and statfs()
+# on mount points need no privileges.
+DynamicUser=yes
+LogsDirectory=system-health
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+# Stay out of the way of the workload being measured.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=60

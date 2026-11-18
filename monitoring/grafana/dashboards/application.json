@@ -963,7 +963,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"app\", level=~\"error|warning|critical\"} | json | line_format \"{{ .level | upper }}  {{ .method }} {{ .path }}{{ if .status }} -> {{ .status }}{{ end }}  {{ .message }}{{ if .duration_ms }} ({{ .duration_ms }} ms){{ end }}\"",
+          "expr": "{service=\"app\", level=~\"error|warning|critical\"} | json | line_format \"{{ .method }} {{ .path }}{{ if .status }} -> {{ .status }}{{ end }}  {{ .message }}{{ if .duration_ms }} ({{ .duration_ms }} ms){{ end }}\"",
           "queryType": "range"
         }
       ],
@@ -1000,7 +1000,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"app\"} | json | line_format \"{{ .level | upper }}  {{ .method }} {{ .path }}{{ if .status }} -> {{ .status }}{{ end }}  {{ .message }}{{ if .duration_ms }} ({{ .duration_ms }} ms){{ end }}\"",
+          "expr": "{service=\"app\"} | json | line_format \"{{ .method }} {{ .path }}{{ if .status }} -> {{ .status }}{{ end }}  {{ .message }}{{ if .duration_ms }} ({{ .duration_ms }} ms){{ end }}\"",
           "queryType": "range"
         }
       ],

@@ -271,8 +271,9 @@ than 200 within 5 s fails it. Zero downtime comes from:
 - a 65 s app keep-alive
 - ingress retries of transport-level failures
 
-See [how it got to zero](docs/kubernetes.md#how-it-got-to-zero). The transcript below was captured
-on a local kind cluster running Kubernetes v1.31. CI runs the same script on v1.36.4.
+See [how it got to zero](docs/kubernetes.md#how-it-got-to-zero). The transcript below comes from a
+kind cluster created from scratch by `kind-up.sh`, with kind v0.33.0 and the pinned Kubernetes
+v1.36.4, the same versions CI uses.
 
 ```
 $ kubectl -n devops-task set image deployment/devops-task-api api=devops-task-api:0.2.0
@@ -281,8 +282,8 @@ deployment.apps/devops-task-api image updated
 $ kubectl -n devops-task rollout status deployment/devops-task-api --timeout=180s
 deployment "devops-task-api" successfully rolled out
   Responses during the update:
-        62 x HTTP 200  version 0.1.0
-        38 x HTTP 200  version 0.2.0
+        81 x HTTP 200  version 0.1.0
+        40 x HTTP 200  version 0.2.0
 
 $ kubectl -n devops-task rollout history deployment/devops-task-api
 REVISION  CHANGE-CAUSE
@@ -295,15 +296,15 @@ deployment.apps/devops-task-api rolled back
 $ kubectl -n devops-task rollout status deployment/devops-task-api --timeout=180s
 deployment "devops-task-api" successfully rolled out
   Responses during the rollback:
-        40 x HTTP 200  version 0.1.0
-        80 x HTTP 200  version 0.2.0
+        38 x HTTP 200  version 0.1.0
+        69 x HTTP 200  version 0.2.0
 
 $ kubectl -n devops-task rollout history deployment/devops-task-api
 REVISION  CHANGE-CAUSE
 2         set image devops-task-api:0.2.0
 3         rollout undo to devops-task-api:0.1.0
 
-### Result: 225 requests through the Ingress, 0 not answered with 200 (slowest 2.160s)
+### Result: 237 requests through the Ingress, 0 not answered with 200 (slowest 1.581s)
 ```
 
 Both versions answered side by side during the swap, and `rollout undo` brought revision 1 back as

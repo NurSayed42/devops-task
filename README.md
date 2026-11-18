@@ -138,10 +138,17 @@ kubectl -n devops-task port-forward svc/devops-task-api 8081:80   # alternative 
 kind delete cluster --name devops-task
 ```
 
-**CI/CD** needs **no secrets**: AWS access is OIDC only. The release pipeline is enabled by
-setting repository variables (`AWS_REGION`, `ECR_REPOSITORY`, `AWS_ECR_PUSH_ROLE_ARN`) and, per
-GitHub Environment, `AWS_DEPLOY_ROLE_ARN`, all taken from Terraform outputs. Until then `main`
-still runs every CI gate, and build and deploy are skipped. See [docs/ci-cd.md](docs/ci-cd.md).
+**CI/CD** needs **no secrets**. Every push to `main` runs the CI gates and a Trivy gate on the
+release candidate, then publishes a multi-arch image (linux/amd64 + linux/arm64, tags `0.1.N` and
+`sha-<7>`, never `latest`, with SBOM and provenance) to one of two registries:
+
+| Registry | When | Authentication | Job permission |
+|----------|------|----------------|----------------|
+| **Amazon ECR** (primary), then staging/production deploy via SSM | repository variables `AWS_REGION`, `ECR_REPOSITORY`, `AWS_ECR_PUSH_ROLE_ARN` are set (plus `AWS_DEPLOY_ROLE_ARN` per GitHub Environment), all from Terraform outputs | OIDC, short-lived role credentials | `id-token: write` |
+| **GHCR** (fallback): `ghcr.io/nursayed42/devops-task-api`, no deploy | any of those variables is missing (no configuration needed) | the workflow's own `GITHUB_TOKEN` | `packages: write` |
+
+When the GHCR fallback is used, the deploy jobs are skipped and the build summary states why. See
+[docs/ci-cd.md](docs/ci-cd.md#registries).
 
 ---
 
@@ -158,6 +165,7 @@ flowchart LR
     ci -->|merge| rel
   end
   rel -->|"OIDC: push role, main only"| ecr[("Amazon ECR<br/>immutable tags<br/>0.1.N and sha-xxxxxxx")]
+  rel -.->|"fallback when AWS is not configured<br/>GITHUB_TOKEN, no deploy"| ghcr[("GHCR<br/>ghcr.io/nursayed42/devops-task-api")]
   rel -->|"OIDC: deploy role per environment<br/>SSM Run Command"| host
   subgraph aws["AWS, provisioned by Terraform"]
     host["EC2, Amazon Linux 2023<br/>Docker + deploy-app<br/>health gate, auto-rollback"]
@@ -400,7 +408,8 @@ only on its own environment's instance.
   races. A second tag, `sha-<7 chars>`, traces an image to its commit, and the commit is tagged
   `v0.1.42` in git.
 - **ECR tags are immutable** and `latest` is never pushed, so "deploy 0.1.41" always means the image
-  that was tested as 0.1.41.
+  that was tested as 0.1.41. On the GHCR fallback, where tags are mutable, the pipeline checks for
+  an existing tag and never overwrites it.
 
 **Secrets.** There are none in git and none in GitHub:
 - **GitHub → AWS:** OIDC with short-lived credentials. Role ARNs are plain variables.
@@ -450,9 +459,10 @@ only on its own environment's instance.
    - Terraform fmt, validate, mocked tests, tflint and a Trivy IaC scan
    - Prometheus, Loki, Alloy and Alertmanager config checks
    - for Kubernetes changes, a full kind end-to-end run
-2. **Merge to `main`** runs the same gates again, then builds the multi-arch image once and pushes
-   it to ECR under immutable tags, with an SBOM and provenance. Later stages deploy *that* image;
-   nothing is rebuilt per environment.
+2. **Merge to `main`** runs the same gates again, plus a Trivy gate on the release candidate,
+   then builds the multi-arch image once and pushes it to ECR under immutable tags, with an SBOM
+   and provenance. Later stages deploy *that* image; nothing is rebuilt per environment. Without
+   AWS configured, the same image goes to GHCR instead and steps 3–4 are skipped.
 3. **Staging deploy** (GitHub Environment `staging`, OIDC role scoped to the staging instance):
    1. SSM runs `deploy-app <image>`. It pulls first, stops the old container with SIGTERM, starts
       the new one and waits up to 60 s for `/health` through the published port. **If it isn't

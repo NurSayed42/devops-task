@@ -2,6 +2,14 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: devops-task-api
+  annotations:
+    # Retry only transport-level failures (the connection was reset or refused
+    # before a response), e.g. a pod closing a pooled connection mid-rollout.
+    # Real application errors (HTTP 500) are NOT retried: that would double the
+    # load on whatever is failing. Safe here because the API is read-only (GET).
+    projectcontour.io/retry-on: reset,connect-failure,refused-stream
+    projectcontour.io/num-retries: "2"
+    projectcontour.io/per-try-timeout: 2s
 spec:
   ingressClassName: contour
   rules:

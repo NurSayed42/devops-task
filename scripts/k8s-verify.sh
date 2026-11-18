@@ -41,6 +41,7 @@ check "at least 2 replicas are available" \
   sh -c "[ \"\$(kubectl -n $NS get deploy devops-task-api -o jsonpath='{.status.availableReplicas}')\" -ge 2 ]"
 
 echo "# Container hardening (inside $pod)"
+# shellcheck disable=SC2016 # single quotes on purpose: $(id -u) must expand inside the pod
 check "runs as UID 10001, not root" in_pod '[ "$(id -u)" = 10001 ]'
 check "root filesystem is read-only" in_pod 'touch /srv/probe 2>&1 | grep -q "Read-only file system"'
 check "/tmp is writable (memory-backed emptyDir)" in_pod 'touch /tmp/probe && rm /tmp/probe'

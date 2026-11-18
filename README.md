@@ -26,6 +26,7 @@ A small FastAPI service that is the base for the DevOps assessment.
 | `LOG_LEVEL`   | `INFO`        | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `APP_ENV`     | `development` | Environment name (added to every log line) |
 | `APP_VERSION` | `0.1.0`       | Reported by `/` and `app_info` |
+| `FAULT_INJECTION` | `false`   | Demo only: adds `GET /debug/fail` (always 500) to exercise error metrics, logs and alerts |
 
 ## Logging
 All logs (app + uvicorn) are single-line JSON on stdout, e.g.:
@@ -48,11 +49,23 @@ python -m app.main            # http://localhost:8080
 pytest
 ruff check app tests
 
-# Docker Compose
-docker compose up --build -d
+# Docker Compose: the app only
+docker compose up --build -d app
 curl localhost:8080/ && curl localhost:8080/health && curl localhost:8080/metrics
 docker compose ps             # shows (healthy)
 ```
+
+## Observability (Prometheus, Grafana, Loki, Alloy, Node Exporter, cAdvisor)
+
+```bash
+openssl rand -base64 18 > secrets/grafana_admin_password   # Grafana admin password (Docker secret)
+docker compose up -d --build                               # app + full monitoring stack
+```
+
+Grafana: http://localhost:3000 (user `admin`, password from the file above). The Application, Host
+and Containers dashboards, data sources and 11 alert rules are all provisioned from `monitoring/`.
+Only Grafana (on 127.0.0.1) and the app publish ports. Details, label and threshold reasoning, and
+the error-spike walkthrough: **[docs/observability.md](docs/observability.md)**.
 
 ## Dockerfile notes
 - **Multi-stage**: builder installs deps into `/install`; runtime copies only that + `app/`.

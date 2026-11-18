@@ -146,6 +146,29 @@ services:
       resources:
         limits: { cpus: "0.50", memory: 256M }
 
+  alertmanager:
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    <<: *common
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --data.retention=120h
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets/alertmanager:/etc/alertmanager/secrets:ro # only its own secret
+      - alertmanager-data:/alertmanager
+    read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    # "alert-egress": the only component that needs the internet (Discord).
+    networks: [monitoring, alert-egress]
+    deploy:
+      resources:
+        limits: { cpus: "0.20", memory: 64M }
+
   grafana:
     image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     <<: *common
@@ -209,12 +232,15 @@ networks:
     internal: true
   grafana-ui:
     name: grafana-ui
+  alert-egress:
+    name: alert-egress
 
 volumes:
   prometheus-data:
   loki-data:
   alloy-data:
   grafana-data:
+  alertmanager-data:
 
 secrets:
   # A git-ignored file (see secrets/README.md). Compose refuses to start Grafana

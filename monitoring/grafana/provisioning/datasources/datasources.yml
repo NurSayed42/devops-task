@@ -21,3 +21,15 @@ datasources:
     editable: false
     jsonData:
       maxLines: 1000
+
+  # Firing alerts and silences in Grafana (Alerting > Alert groups), since
+  # Alertmanager's own UI is not exposed.
+  - name: Alertmanager
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    editable: false
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false

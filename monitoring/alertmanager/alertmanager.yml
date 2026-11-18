@@ -1,0 +1,35 @@
+# Routes Prometheus alerts to Discord. The webhook URL is a secret file
+# (secrets/alertmanager/discord_webhook_url, see secrets/README.md). Without it
+# alerts are still visible in Grafana (Alerting > Alert groups), and the failed
+# deliveries are only logged.
+
+route:
+  receiver: discord
+  group_by: [alertname, severity]
+  group_wait: 30s # batch alerts that start together into one message
+  group_interval: 5m
+  repeat_interval: 4h # warnings: a reminder twice a working day, not a stream
+  routes:
+    - matchers: [severity="critical"]
+      receiver: discord
+      repeat_interval: 1h
+
+receivers:
+  - name: discord
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/discord_webhook_url
+        send_resolved: true
+        title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}'
+        message: |-
+          {{ range .Alerts }}**{{ .Labels.severity | toUpper }}** {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+
+inhibit_rules:
+  # When the app is down, its error-rate and latency alerts add nothing.
+  - source_matchers: [alertname="AppDown"]
+    target_matchers: [alertname=~"AppHighErrorRate|AppHighLatencyP95"]
+  # A critical disk alert replaces the warning for the same filesystem.
+  - source_matchers: [alertname="HostDiskUsageCritical"]
+    target_matchers: [alertname="HostDiskUsageHigh"]
+    equal: [instance, mountpoint]

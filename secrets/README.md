@@ -5,7 +5,10 @@ Files in this folder are mounted into containers as Docker secrets
 
 | File | Used by | Contents |
 |------|---------|----------|
-| `grafana_admin_password` | Grafana (`GF_SECURITY_ADMIN_PASSWORD__FILE`) | the admin password, one line |
+| `grafana_admin_password` | Grafana (`GF_SECURITY_ADMIN_PASSWORD__FILE`) | the admin password, one line (**required**) |
+| `alertmanager/discord_webhook_url` | Alertmanager (`webhook_url_file`) | a Discord webhook URL (optional: without it alerts only show in Grafana) |
+
+Alertmanager gets only the `alertmanager/` subfolder mounted, never the Grafana password.
 
 Create it once before `docker compose up`:
 

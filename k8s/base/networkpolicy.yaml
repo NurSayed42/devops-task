@@ -1,0 +1,38 @@
+# Zero-trust inside the cluster: nothing may talk to or from pods in this
+# namespace unless a policy below allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# The API accepts traffic only from the ingress controller's Envoy pods (and a
+# Prometheus in a "monitoring" namespace, for scraping /metrics). It makes no
+# outbound calls, so no egress is allowed at all (not even DNS).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devops-task-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: devops-task-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: projectcontour
+          podSelector:
+            matchLabels:
+              app: envoy
+      ports:
+        - port: http
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: http

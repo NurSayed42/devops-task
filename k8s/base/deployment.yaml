@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-task-api
+spec:
+  # The HPA keeps 2-5 replicas; 2 is also its floor, so a re-apply never drops
+  # below what the HPA would choose at idle.
+  replicas: 2
+  revisionHistoryLimit: 5 # what `kubectl rollout undo` can go back to
+  minReadySeconds: 5 # a new pod must stay Ready 5s before it counts as available
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero downtime: never go below the desired number of ready pods; add one
+      # new pod at a time and only remove an old one once the new one is ready.
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devops-task-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: devops-task-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: devops-task-api
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001 # secret files below are root-owned; group 10001 makes them readable
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas over nodes, so one node failing doesn't take all of them.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: devops-task-api
+      containers:
+        - name: api
+          image: devops-task-api # tag set per overlay (kustomize `images`)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: devops-task-api-config
+          resources:
+            # requests = what the scheduler reserves and the HPA's 100% mark;
+            # limits = hard ceiling (CPU is throttled, memory is OOM-killed).
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # Startup gets up to 30s before liveness takes over, so a slow start
+          # is never killed as "unhealthy".
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 2
+            failureThreshold: 15
+          # Not ready -> removed from the Service's endpoints (no traffic).
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          # Stuck -> restarted. More tolerant than readiness on purpose.
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          lifecycle:
+            # On termination the pod is removed from endpoints and gets SIGTERM
+            # at the same time; Envoy/kube-proxy need a moment to stop routing
+            # to it. Waiting 5s first means no request reaches a closing pod.
+            preStop:
+              sleep:
+                seconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # Secrets as read-only files, not env vars: env leaks into child
+            # processes, crash dumps and `kubectl describe`.
+            - name: app-secrets
+              mountPath: /run/secrets/app
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: app-secrets
+          secret:
+            secretName: devops-task-api-secrets
+            defaultMode: 0440 # owner root + group 10001 (fsGroup): read-only for the app

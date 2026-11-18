@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devops-task-api
+spec:
+  ingressClassName: contour
+  rules:
+    # *.localtest.me resolves to 127.0.0.1 in public DNS, so this works in a
+    # browser without editing /etc/hosts. Overlays can change the host.
+    - host: devops-task.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: devops-task-api
+                port:
+                  name: http

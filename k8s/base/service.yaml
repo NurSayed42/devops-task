@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-task-api
+spec:
+  type: ClusterIP # reachable only inside the cluster; the Ingress is the way in
+  selector:
+    app.kubernetes.io/name: devops-task-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

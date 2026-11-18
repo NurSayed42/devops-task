@@ -20,3 +20,5 @@ k8s/
 terraform/
 monitoring/
 scripts/
+secrets/
+docs/

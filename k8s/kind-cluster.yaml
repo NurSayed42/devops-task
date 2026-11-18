@@ -1,0 +1,17 @@
+# Local cluster: kind create cluster --config k8s/kind-cluster.yaml
+# One control plane + two workers, so pod spreading, PodDisruptionBudgets and
+# rolling updates behave like they would on a real multi-node cluster.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: devops-task
+nodes:
+  - role: control-plane
+  - role: worker
+    # Envoy (Contour's data plane) binds hostPort 80 on every worker; this
+    # maps http://localhost:8088 on the host to it. Loopback only.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8088
+        listenAddress: 127.0.0.1
+        protocol: TCP
+  - role: worker

@@ -85,10 +85,12 @@ spec:
           lifecycle:
             # On termination the pod is removed from endpoints and gets SIGTERM
             # at the same time; Envoy/kube-proxy need a moment to stop routing
-            # to it. Waiting 5s first means no request reaches a closing pod.
+            # to it. Waiting first means no new request reaches a closing pod.
+            # 10s: 5s was not always enough on a loaded node (seen as a 503).
+            # 10s sleep + up to 20s drain stays within the 30s grace period.
             preStop:
               sleep:
-                seconds: 5
+                seconds: 10
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

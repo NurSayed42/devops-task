@@ -24,9 +24,10 @@ services:
   docker-proxy:
     image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
     <<: *common
-    environment:
-      CONTAINERS: 1
-      INFO: 1
+    environment: # GET only (POST stays 0): read, never change
+      CONTAINERS: 1 # list/inspect containers, read their logs
+      NETWORKS: 1 # Alloy's Docker discovery reads network metadata
+      INFO: 1 # cAdvisor reads /info
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [monitoring]
@@ -108,6 +109,43 @@ services:
       resources:
         limits: { cpus: "0.50", memory: 256M }
 
+  loki:
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
+    <<: *common
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    read_only: true
+    # Distroless image (no shell, no wget): liveness is watched by Prometheus
+    # scraping /metrics instead of a Docker healthcheck.
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  # Log collector: discovers containers through the proxy, tails their logs,
+  # parses the app's JSON and pushes to Loki.
+  alloy:
+    image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
+    <<: *common
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    user: "473:473" # the image's "alloy" user; it defaults to root, which it doesn't need
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data # read positions survive restarts
+    read_only: true
+    depends_on: [docker-proxy, loki]
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+
 networks:
   monitoring:
     name: monitoring
@@ -115,3 +153,5 @@ networks:
 
 volumes:
   prometheus-data:
+  loki-data:
+  alloy-data:

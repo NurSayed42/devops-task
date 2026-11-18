@@ -951,7 +951,7 @@
     {
       "type": "logs",
       "title": "Error and warning logs",
-      "description": "Expand a line for its fields (path, method, status) and the exception traceback.",
+      "description": "One line per event; expand a line for every JSON field, including the exception traceback.",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -963,7 +963,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"app\", level=~\"error|warning|critical\"}",
+          "expr": "{service=\"app\", level=~\"error|warning|critical\"} | json | line_format \"{{ .level | upper }}  {{ .method }} {{ .path }}{{ if .status }} -> {{ .status }}{{ end }}  {{ .message }}{{ if .duration_ms }} ({{ .duration_ms }} ms){{ end }}\"",
           "queryType": "range"
         }
       ],
@@ -988,7 +988,7 @@
     {
       "type": "logs",
       "title": "All app logs (successful health checks are dropped by Alloy)",
-      "description": "",
+      "description": "Filter further in Explore, e.g. {service=\"app\"} | status=~\"5..\" or | path=\"/\".",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -1000,7 +1000,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"app\"}",
+          "expr": "{service=\"app\"} | json | line_format \"{{ .level | upper }}  {{ .method }} {{ .path }}{{ if .status }} -> {{ .status }}{{ end }}  {{ .message }}{{ if .duration_ms }} ({{ .duration_ms }} ms){{ end }}\"",
           "queryType": "range"
         }
       ],

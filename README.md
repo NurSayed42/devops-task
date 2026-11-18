@@ -590,6 +590,18 @@ against a mocked AWS provider (`terraform/*/tests/*.tftest.hcl`) and runs in CI 
 `shared` and `app` (see [terraform/README.md](terraform/README.md)) deploys the complete stack.**
 The release pipeline then builds, pushes and deploys to it ([docs/ci-cd.md](docs/ci-cd.md)).
 
+**Release pipeline on `main` (GHCR fallback):**
+[Release run #6](https://github.com/NurSayed42/devops-task/actions/runs/44383142296) (commit `49859a9`)
+ran the CI gates, passed the Trivy gate on the release candidate, and pushed a multi-arch image to
+[`ghcr.io/nursayed42/devops-task-api`](https://github.com/NurSayed42/devops-task/pkgs/container/devops-task-api).
+- Tags `0.1.6` and `sha-49859a9`, plus the git tag `v0.1.6`.
+- The ECR steps and the staging/production deploys were skipped, because the AWS variables are not
+  set.
+- [`docs/evidence/ci/ghcr-manifest.txt`](docs/evidence/ci/ghcr-manifest.txt) is
+  `docker buildx imagetools inspect` without credentials. It shows **linux/amd64 and linux/arm64**
+  manifests, an SBOM/provenance attestation for each, both tags on the same index digest, and the
+  `org.opencontainers.image.source` annotation that links the package to this repository.
+
 **Other evidence in the repo:**
 - Grafana [dashboard screenshots](docs/observability.md#dashboards), and an alert that fired end to
   end (pending at 06:26:56, firing at 06:32:01 after its 5-minute `for`).

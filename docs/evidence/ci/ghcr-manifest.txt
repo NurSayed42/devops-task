@@ -1,0 +1,43 @@
+# GHCR release image: ghcr.io/nursayed42/devops-task-api
+# Release run #6: https://github.com/NurSayed42/devops-task/actions/runs/44383142296 (commit 49859a9, git tag v0.1.6)
+# Captured 2026-11-18T19:48:49Z with a Docker config that holds no credentials: the package is public.
+
+$ docker buildx imagetools inspect ghcr.io/nursayed42/devops-task-api:0.1.6
+Name:      ghcr.io/nursayed42/devops-task-api:0.1.6
+MediaType: application/vnd.oci.image.index.v1+json
+Digest:    sha256:3d67cf28f398a736f545de8d581dbb90b52b128ec2fe576589efe498b3c97679
+           
+Manifests: 
+  Name:        ghcr.io/nursayed42/devops-task-api:0.1.6@sha256:904b114cbef16c370dec59e0ccf77fac612e32d6f758b773bc4d8ef0f5f9236d
+  MediaType:   application/vnd.oci.image.manifest.v1+json
+  Platform:    linux/amd64
+               
+  Name:        ghcr.io/nursayed42/devops-task-api:0.1.6@sha256:67012cb7c634da6cd968543abcd3ee8c7bbe49754194d48a1c4dd1273838a313
+  MediaType:   application/vnd.oci.image.manifest.v1+json
+  Platform:    linux/arm64
+               
+  Name:        ghcr.io/nursayed42/devops-task-api:0.1.6@sha256:8fd213d0db4c986af3225d99d15e75a1c9310ac610797234266e1b0f1e93dee7
+  MediaType:   application/vnd.oci.image.manifest.v1+json
+  Platform:    unknown/unknown
+  Annotations: 
+    vnd.docker.reference.digest: sha256:904b114cbef16c370dec59e0ccf77fac612e32d6f758b773bc4d8ef0f5f9236d
+    vnd.docker.reference.type:   attestation-manifest
+               
+  Name:        ghcr.io/nursayed42/devops-task-api:0.1.6@sha256:0902a3fb13591de6db57c167574e779161137e03e87ce8d45769ea5a1937435b
+  MediaType:   application/vnd.oci.image.manifest.v1+json
+  Platform:    unknown/unknown
+  Annotations: 
+    vnd.docker.reference.digest: sha256:67012cb7c634da6cd968543abcd3ee8c7bbe49754194d48a1c4dd1273838a313
+    vnd.docker.reference.type:   attestation-manifest
+
+$ docker buildx imagetools inspect ghcr.io/nursayed42/devops-task-api:sha-49859a9 --format '{{.Manifest.Digest}}'   # same index as 0.1.6
+sha256:3d67cf28f398a736f545de8d581dbb90b52b128ec2fe576589efe498b3c97679
+$ docker buildx imagetools inspect ghcr.io/nursayed42/devops-task-api:0.1.6 --raw   # index annotations (link the package to the repository)
+{
+  "mediaType": "application/vnd.oci.image.index.v1+json",
+  "annotations": {
+    "org.opencontainers.image.description": "FastAPI hello service for the DevOps assessment",
+    "org.opencontainers.image.revision": "49859a9e6695f507101b16b952603e9cbc016128",
+    "org.opencontainers.image.source": "https://github.com/NurSayed42/devops-task"
+  }
+}

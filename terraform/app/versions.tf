@@ -11,7 +11,7 @@ terraform {
   # Partial config. One state file per environment:
   #   terraform init -backend-config=envs/<env>.s3.tfbackend -backend-config="bucket=<state bucket>"
   backend "s3" {
-    region       = "ap-south-1" # must match the bootstrap bucket's region
+    region       = "us-east-1" # must match the bootstrap bucket's region
     encrypt      = true
     use_lockfile = true # S3-native state locking (no DynamoDB table needed)
   }

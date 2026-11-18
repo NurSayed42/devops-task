@@ -22,7 +22,7 @@ one environment can't touch another.
 ## Apply
 
 ```bash
-export AWS_REGION=ap-south-1
+export AWS_REGION=us-east-1
 STATE_BUCKET="devops-task-tfstate-$(aws sts get-caller-identity --query Account --output text)"
 
 # 1. State bucket (once per account)

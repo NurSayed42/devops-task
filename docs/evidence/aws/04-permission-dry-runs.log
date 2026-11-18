@@ -1,0 +1,10 @@
+Identity: arn:aws:sts::739275475668:assumed-role/WSParticipantRole/Participant
+Reads work: AMI ami-00f43ee0e98d52529 (SSM public parameter), default VPC vpc-05d510516be57abfa
+
+$ aws ec2 run-instances --image-id ami-00f43ee0e98d52529 --instance-type t3.micro --dry-run
+
+aws: [ERROR]: An error occurred (UnauthorizedOperation) when calling the RunInstances operation: You are not authorized to perform this operation. User: arn:aws:sts::739275475668:assumed-role/WSPartic
+
+$ aws ec2 create-security-group --group-name dryrun-test --description dryrun --vpc-id vpc-05d510516be57abfa --dry-run
+
+aws: [ERROR]: An error occurred (UnauthorizedOperation) when calling the CreateSecurityGroup operation: You are not authorized to perform this operation. User: arn:aws:sts::739275475668:assumed-role/W

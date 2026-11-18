@@ -76,7 +76,7 @@ Repository variables (*Settings → Secrets and variables → Actions → Variab
 
 | Variable | Value | Source |
 |----------|-------|--------|
-| `AWS_REGION` | `ap-south-1` | region used in Terraform |
+| `AWS_REGION` | `us-east-1` | region used in Terraform |
 | `ECR_REPOSITORY` | `devops-task-api` | `terraform -chdir=terraform/shared output -raw ecr_repository_name` |
 | `AWS_ECR_PUSH_ROLE_ARN` | `arn:aws:iam::<acct>:role/devops-task-github-ecr-push` | `terraform -chdir=terraform/shared output -raw ecr_push_role_arn` |
 | `DEPLOY_PRODUCTION` | `true` (optional) | set once a production host exists |
@@ -91,7 +91,7 @@ Environments (*Settings → Environments*):
 The same with the GitHub CLI:
 
 ```bash
-gh variable set AWS_REGION --body ap-south-1
+gh variable set AWS_REGION --body us-east-1
 gh variable set ECR_REPOSITORY --body "$(terraform -chdir=terraform/shared output -raw ecr_repository_name)"
 gh variable set AWS_ECR_PUSH_ROLE_ARN --body "$(terraform -chdir=terraform/shared output -raw ecr_push_role_arn)"
 gh variable set AWS_DEPLOY_ROLE_ARN --env staging --body "$(terraform -chdir=terraform/app output -raw deploy_role_arn)"

@@ -1,0 +1,8 @@
+aws_s3_bucket.state: Creating...
+
+Error: creating S3 Bucket (devops-task-tfstate-739275475668): operation error S3: CreateBucket, https response error StatusCode: 403, RequestID: JSS85TPN12YESN6J, HostID: eLqEkH4ToVf7Bt224lttk1Jr6mPTaLWw9Q9VFAZfcIUJQoqXPv6H50Dtp5qr+ieMzbFUDzqUB2DknucdHnLfgJTqi2FVzaCe, api error AccessDenied: User: arn:aws:sts::739275475668:assumed-role/WSParticipantRole/Participant is not authorized to perform: s3:CreateBucket on resource: "arn:aws:s3:::devops-task-tfstate-739275475668" because no identity-based policy allows the s3:CreateBucket action
+
+  with aws_s3_bucket.state,
+  on main.tf line 9, in resource "aws_s3_bucket" "state":
+   9: resource "aws_s3_bucket" "state" {
+

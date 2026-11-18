@@ -12,7 +12,7 @@ terraform {
   # init time (see README). Backend blocks cannot reference variables.
   backend "s3" {
     key          = "shared/terraform.tfstate"
-    region       = "ap-south-1" # must match the bootstrap bucket's region
+    region       = "us-east-1" # must match the bootstrap bucket's region
     encrypt      = true
     use_lockfile = true # S3-native state locking (no DynamoDB table needed)
   }

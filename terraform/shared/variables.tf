@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "Region for the ECR repository and IAM resources."
   type        = string
-  default     = "ap-south-1"
+  default     = "us-east-1"
 }
 
 variable "project" {

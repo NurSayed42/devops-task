@@ -26,6 +26,7 @@ A small FastAPI service that is the base for the DevOps assessment.
 | `LOG_LEVEL`   | `INFO`        | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `APP_ENV`     | `development` | Environment name (added to every log line) |
 | `APP_VERSION` | `0.1.0`       | Reported by `/` and `app_info` |
+| `FAULT_INJECTION` | `false`   | Demo only: adds `GET /debug/fail` (always 500) to exercise error metrics, logs and alerts |
 
 ## Logging
 All logs (app + uvicorn) are single-line JSON on stdout, e.g.:
@@ -48,22 +49,44 @@ python -m app.main            # http://localhost:8080
 pytest
 ruff check app tests
 
-# Docker Compose
-docker compose up --build -d
+# Docker Compose: the app only
+docker compose up --build -d app
 curl localhost:8080/ && curl localhost:8080/health && curl localhost:8080/metrics
 docker compose ps             # shows (healthy)
 ```
 
+## Observability (Prometheus, Grafana, Loki, Alloy, Node Exporter, cAdvisor)
+
+```bash
+openssl rand -base64 18 > secrets/grafana_admin_password   # Grafana admin password (Docker secret)
+docker compose up -d --build                               # app + full monitoring stack
+```
+
+Grafana: http://localhost:3000 (user `admin`, password from the file above). The Application, Host
+and Containers dashboards, data sources and 11 alert rules are all provisioned from `monitoring/`.
+Only Grafana (on 127.0.0.1) and the app publish ports. Details, label and threshold reasoning, and
+the error-spike walkthrough: **[docs/observability.md](docs/observability.md)**.
+
 ## Dockerfile notes
 - **Multi-stage**: builder installs deps into `/install`; runtime copies only that + `app/`.
 - **Base pinned**: `python:3.12.16-alpine3.24@sha256:c5ba3dee…` — version tag for readability, multi-arch index digest for immutability.
-- **Minimal**: Alpine; pip removed from the final image.
+- **Minimal**: Alpine; pip removed from the runtime filesystem (fewer CVEs, no package installs at runtime).
 - **Non-root**: UID/GID `10001`. App code is root-owned, so the runtime user can read but not modify it.
 - **HEALTHCHECK** uses Python's `urllib` (no curl needed).
 - **OCI labels** with version, git SHA, and build date passed as build args.
 - Compose also runs it `read_only` with `/tmp` as tmpfs, `no-new-privileges`, CPU/memory limits, and `restart: unless-stopped`.
 
-**Final image size:** _fill in after `docker images devops-task-api` (expected ~60–70 MB)._
+**Final image size: 76.5 MB uncompressed, ~24 MB compressed** (what a registry pull transfers),
+measured for linux/amd64:
+
+| Layer | Size |
+|-------|------|
+| `python:3.12.16-alpine3.24` base | 56.0 MB |
+| Python dependencies (FastAPI, uvicorn, prometheus-client) | 20.4 MB |
+| App code | 57 kB |
+
+(`docker image ls` on Docker Desktop shows ~101 MB because the containerd image store counts
+the compressed blobs as well. The sum of `docker history` layer sizes is the real on-disk size.)
 
 ```bash
 docker build \

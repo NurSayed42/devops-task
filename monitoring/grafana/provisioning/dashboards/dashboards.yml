@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: devops-task
+    folder: DevOps Task
+    type: file
+    # Dashboards are code: changes go through the JSON files in the repo, not the UI.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

@@ -1,3 +1,10 @@
+name: devops-task
+
+# Monitoring/logging stack (Prometheus, Grafana, Loki, Alloy, Node Exporter,
+# cAdvisor). `docker compose up -d app` starts the app on its own.
+include:
+  - docker-compose.monitoring.yml
+
 services:
   app:
     build:
@@ -13,6 +20,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       APP_ENV: ${APP_ENV:-local}
       APP_VERSION: ${APP_VERSION:-0.1.0}
+      # Demo only: `FAULT_INJECTION=true docker compose up -d app` adds GET /debug/fail (500).
+      FAULT_INJECTION: ${FAULT_INJECTION:-false}
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true
@@ -36,6 +45,8 @@ services:
           memory: 64M
     networks:
       - app-net
+      # Lets Prometheus scrape /metrics over the internal network.
+      - monitoring
 
 networks:
   app-net:

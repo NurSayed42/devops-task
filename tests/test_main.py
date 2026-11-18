@@ -95,6 +95,19 @@ def test_unhandled_exception_is_counted_as_error(failing_route):
     assert REGISTRY.get_sample_value("http_requests_total", {**labels, "status": "500"}) >= 1
 
 
+def test_unhandled_exception_is_logged_once_and_answered_with_500(failing_route, caplog):
+    # Default TestClient re-raises server exceptions: nothing may escape the middleware.
+    with TestClient(app) as c, caplog.at_level(logging.INFO):
+        resp = c.get(failing_route)
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "Internal Server Error"}
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].exc_info is not None
+    assert errors[0].path == failing_route
+
+
 def test_settings_read_from_environment(monkeypatch):
     monkeypatch.setenv("PORT", "9090")
     monkeypatch.setenv("LOG_LEVEL", "debug")
@@ -103,3 +116,24 @@ def test_settings_read_from_environment(monkeypatch):
 
     expected = Settings(port=9090, log_level="DEBUG", environment="staging", app_version="1.2.3")
     assert get_settings() == expected
+
+
+@pytest.mark.parametrize(("value", "enabled"), [("true", True), ("1", True), ("false", False), ("", False)])
+def test_fault_injection_flag(monkeypatch, value, enabled):
+    monkeypatch.setenv("FAULT_INJECTION", value)
+    assert get_settings().fault_injection is enabled
+
+
+def test_fault_injection_route_absent_by_default(client):
+    assert client.get("/debug/fail").status_code == 404
+
+
+def test_fault_injection_route_returns_500_when_enabled():
+    from app.main import register_fault_injection
+
+    register_fault_injection(app)
+    try:
+        with TestClient(app, raise_server_exceptions=False) as c:
+            assert c.get("/debug/fail").status_code == 500
+    finally:
+        app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) != "/debug/fail"]

@@ -15,3 +15,4 @@ tfplan
 *.tfplan
 .terraform/
 k8s/overlays/*/secrets.env
+terraform/**/*_override.tf

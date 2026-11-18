@@ -1,0 +1,16 @@
+aws_iam_openid_connect_provider.github[0]: Creating...
+aws_ecr_repository.app: Creating...
+
+Error: creating ECR Repository (devops-task-api): operation error ECR: CreateRepository, https response error StatusCode: 400, RequestID: 0fa4ff1d-1372-4b46-9419-3f89274e2d83, api error AccessDeniedException: User: arn:aws:sts::739275475668:assumed-role/WSParticipantRole/Participant is not authorized to perform: ecr:CreateRepository on resource: arn:aws:ecr:us-east-1:739275475668:repository/devops-task-api because no identity-based policy allows the ecr:CreateRepository action. Go to https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/authorization-details/01r5w5oo61iqoeo3y4dssk8ie for complete details, or call the GetRequestAuthorizationDetails API with the following authorization id: 01r5w5oo61iqoeo3y4dssk8ie
+
+  with aws_ecr_repository.app,
+  on ecr.tf line 1, in resource "aws_ecr_repository" "app":
+   1: resource "aws_ecr_repository" "app" {
+
+
+Error: creating IAM OIDC Provider: operation error IAM: CreateOpenIDConnectProvider, https response error StatusCode: 403, RequestID: 503f7301-ca5d-4aa9-ac0a-189ee399fd09, api error AccessDenied: User: arn:aws:sts::739275475668:assumed-role/WSParticipantRole/Participant is not authorized to perform: iam:CreateOpenIDConnectProvider on resource: arn:aws:iam::739275475668:oidc-provider/token.actions.githubusercontent.com because no identity-based policy allows the iam:CreateOpenIDConnectProvider action. Go to https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/authorization-details/bju2mbb0ewhbs1wrhw09ofjuv for complete details, or call the GetRequestAuthorizationDetails API with the following authorization id: bju2mbb0ewhbs1wrhw09ofjuv
+
+  with aws_iam_openid_connect_provider.github[0],
+  on github_oidc.tf line 13, in resource "aws_iam_openid_connect_provider" "github":
+  13: resource "aws_iam_openid_connect_provider" "github" {
+

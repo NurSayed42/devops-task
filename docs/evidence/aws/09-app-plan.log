@@ -1,0 +1,187 @@
+data.aws_ssm_parameter.al2023_ami: Reading...
+data.aws_ecr_repository.app: Reading...
+data.aws_region.current: Reading...
+data.aws_ec2_instance_type_offerings.supported: Reading...
+data.aws_partition.current: Reading...
+data.aws_iam_openid_connect_provider.github: Reading...
+data.aws_vpc.default: Reading...
+data.aws_iam_policy_document.ec2_trust: Reading...
+data.aws_partition.current: Read complete after 0s [id=aws]
+data.aws_iam_policy_document.ec2_trust: Read complete after 0s [id=2851119427]
+data.aws_region.current: Read complete after 0s [id=us-east-1]
+data.aws_ssm_parameter.al2023_ami: Read complete after 1s [id=/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64]
+data.aws_ec2_instance_type_offerings.supported: Read complete after 1s [id=us-east-1]
+data.aws_vpc.default: Read complete after 4s [id=vpc-05d510516be57abfa]
+data.aws_subnets.default: Reading...
+data.aws_subnets.default: Read complete after 0s [id=us-east-1]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform planned the following actions, but then encountered a problem:
+
+  # aws_cloudwatch_log_group.app will be created
+  + resource "aws_cloudwatch_log_group" "app" {
+      + arn                         = (known after apply)
+      + deletion_protection_enabled = (known after apply)
+      + id                          = (known after apply)
+      + log_group_class             = (known after apply)
+      + name                        = "/devops-task/staging/app"
+      + name_prefix                 = (known after apply)
+      + region                      = "us-east-1"
+      + retention_in_days           = 7
+      + skip_destroy                = false
+      + tags_all                    = {
+          + "Environment" = "staging"
+          + "ManagedBy"   = "terraform"
+          + "Project"     = "devops-task"
+          + "Stack"       = "app"
+        }
+    }
+
+  # aws_iam_instance_profile.app will be created
+  + resource "aws_iam_instance_profile" "app" {
+      + arn         = (known after apply)
+      + create_date = (known after apply)
+      + id          = (known after apply)
+      + name        = "devops-task-staging-instance"
+      + name_prefix = (known after apply)
+      + path        = "/"
+      + role        = "devops-task-staging-instance"
+      + tags_all    = {
+          + "Environment" = "staging"
+          + "ManagedBy"   = "terraform"
+          + "Project"     = "devops-task"
+          + "Stack"       = "app"
+        }
+      + unique_id   = (known after apply)
+    }
+
+  # aws_iam_role.instance will be created
+  + resource "aws_iam_role" "instance" {
+      + arn                   = (known after apply)
+      + assume_role_policy    = jsonencode(
+            {
+              + Statement = [
+                  + {
+                      + Action    = "sts:AssumeRole"
+                      + Effect    = "Allow"
+                      + Principal = {
+                          + Service = "ec2.amazonaws.com"
+                        }
+                    },
+                ]
+              + Version   = "2012-10-17"
+            }
+        )
+      + create_date           = (known after apply)
+      + description           = "EC2 host for devops-task-staging: pull the app image, ship logs, be managed by SSM"
+      + force_detach_policies = false
+      + id                    = (known after apply)
+      + managed_policy_arns   = (known after apply)
+      + max_session_duration  = 3600
+      + name                  = "devops-task-staging-instance"
+      + name_prefix           = (known after apply)
+      + path                  = "/"
+      + tags_all              = {
+          + "Environment" = "staging"
+          + "ManagedBy"   = "terraform"
+          + "Project"     = "devops-task"
+          + "Stack"       = "app"
+        }
+      + unique_id             = (known after apply)
+
+      + inline_policy (known after apply)
+    }
+
+  # aws_iam_role_policy_attachment.ssm_core will be created
+  + resource "aws_iam_role_policy_attachment" "ssm_core" {
+      + id         = (known after apply)
+      + policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      + role       = "devops-task-staging-instance"
+    }
+
+  # aws_security_group.app will be created
+  + resource "aws_security_group" "app" {
+      + arn                    = (known after apply)
+      + description            = "devops-task-staging: app port in; HTTPS out to AWS APIs and package repos"
+      + egress                 = (known after apply)
+      + id                     = (known after apply)
+      + ingress                = (known after apply)
+      + name                   = (known after apply)
+      + name_prefix            = "devops-task-staging-app-"
+      + owner_id               = (known after apply)
+      + region                 = "us-east-1"
+      + revoke_rules_on_delete = false
+      + tags                   = {
+          + "Name" = "devops-task-staging-app"
+        }
+      + tags_all               = {
+          + "Environment" = "staging"
+          + "ManagedBy"   = "terraform"
+          + "Name"        = "devops-task-staging-app"
+          + "Project"     = "devops-task"
+          + "Stack"       = "app"
+        }
+      + vpc_id                 = "vpc-05d510516be57abfa"
+    }
+
+  # aws_vpc_security_group_egress_rule.https will be created
+  + resource "aws_vpc_security_group_egress_rule" "https" {
+      + arn                    = (known after apply)
+      + cidr_ipv4              = "0.0.0.0/0"
+      + description            = "HTTPS to AWS APIs and package repositories"
+      + from_port              = 443
+      + id                     = (known after apply)
+      + ip_protocol            = "tcp"
+      + region                 = "us-east-1"
+      + security_group_id      = (known after apply)
+      + security_group_rule_id = (known after apply)
+      + tags_all               = {
+          + "Environment" = "staging"
+          + "ManagedBy"   = "terraform"
+          + "Project"     = "devops-task"
+          + "Stack"       = "app"
+        }
+      + to_port                = 443
+    }
+
+  # aws_vpc_security_group_ingress_rule.app["0.0.0.0/0"] will be created
+  + resource "aws_vpc_security_group_ingress_rule" "app" {
+      + arn                    = (known after apply)
+      + cidr_ipv4              = "0.0.0.0/0"
+      + description            = "App HTTP traffic"
+      + from_port              = 80
+      + id                     = (known after apply)
+      + ip_protocol            = "tcp"
+      + region                 = "us-east-1"
+      + security_group_id      = (known after apply)
+      + security_group_rule_id = (known after apply)
+      + tags_all               = {
+          + "Environment" = "staging"
+          + "ManagedBy"   = "terraform"
+          + "Project"     = "devops-task"
+          + "Stack"       = "app"
+        }
+      + to_port                = 80
+    }
+
+Plan: 7 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + log_group_name = "/devops-task/staging/app"
+
+Error: reading IAM OIDC Provider (https://token.actions.githubusercontent.com): couldn't find resource
+
+  with data.aws_iam_openid_connect_provider.github,
+  on iam.tf line 73, in data "aws_iam_openid_connect_provider" "github":
+  73: data "aws_iam_openid_connect_provider" "github" {
+
+
+Error: reading ECR Repository (devops-task-api): couldn't find resource
+
+  with data.aws_ecr_repository.app,
+  on main.tf line 13, in data "aws_ecr_repository" "app":
+  13: data "aws_ecr_repository" "app" {
+

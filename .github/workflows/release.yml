@@ -1,8 +1,11 @@
 name: Release
 
-# main -> same CI gates as PRs -> multi-arch image in ECR -> staging ->
-# (optional, approval-gated) production. Every step authenticates to AWS with
-# short-lived OIDC credentials; no AWS keys are stored in GitHub.
+# main -> same CI gates as PRs -> Trivy gate -> multi-arch image -> registry:
+#   * Amazon ECR (primary) when the AWS variables are set; then staging and
+#     (optional, approval-gated) production deploys via SSM, authenticated
+#     with short-lived OIDC credentials; no AWS keys are stored in GitHub.
+#   * GitHub Container Registry (fallback) when they are not, authenticated
+#     with the workflow's own GITHUB_TOKEN; there is no host to deploy to.
 on:
   push:
     branches: [main]
@@ -26,20 +29,17 @@ jobs:
       contents: read
 
   build:
-    name: Build & push multi-arch image
+    name: Build, scan & push multi-arch image
     needs: ci
-    # Until the AWS side exists (terraform apply + repository variables), main
-    # still gets CI but nothing is pushed or deployed.
-    if: vars.AWS_ECR_PUSH_ROLE_ARN != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write # OIDC token -> ECR push role
+      packages: write # push to GHCR (fallback registry)
+      id-token: write # OIDC token -> ECR push role (primary registry)
     outputs:
       version: ${{ steps.version.outputs.version }}
-    env:
-      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      registry: ${{ steps.target.outputs.registry }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +60,25 @@ jobs:
           echo "sha_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "Release version: ${version}"
 
+      # ECR only when all three AWS variables exist; otherwise GHCR.
+      - name: Choose registry
+        id: target
+        env:
+          AWS_REGION_VAR: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          PUSH_ROLE: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+        run: |
+          if [[ -n $AWS_REGION_VAR && -n $ECR_REPOSITORY && -n $PUSH_ROLE ]]; then
+            echo "registry=ecr" >> "$GITHUB_OUTPUT"
+            echo "Registry: Amazon ECR (AWS variables are set)"
+          else
+            echo "registry=ghcr" >> "$GITHUB_OUTPUT"
+            echo "Registry: GHCR fallback (AWS_REGION, ECR_REPOSITORY or AWS_ECR_PUSH_ROLE_ARN is not set)"
+          fi
+
+      # ---- Primary: Amazon ECR (unchanged) ----
       - name: Assume the ECR push role (OIDC)
+        if: steps.target.outputs.registry == 'ecr'
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
@@ -69,21 +87,54 @@ jobs:
 
       - name: Log in to ECR
         id: ecr
+        if: steps.target.outputs.registry == 'ecr'
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      # Tags are immutable in ECR, so a re-run of this job must not try to push
-      # the same version again.
+      # ---- Fallback: GitHub Container Registry, no extra secret ----
+      - name: Log in to GHCR
+        if: steps.target.outputs.registry == 'ghcr'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image repository
+        id: repo
+        env:
+          REGISTRY_KIND: ${{ steps.target.outputs.registry }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          if [[ $REGISTRY_KIND == ecr ]]; then
+            echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          else
+            # GHCR names must be lowercase (the owner is "NurSayed42").
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/devops-task-api" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A tag is never overwritten: ECR enforces it (immutable tags); for GHCR
+      # this check does. It also makes a re-run of this job idempotent.
       - name: Check whether this version was already pushed
         id: exists
         env:
+          REGISTRY_KIND: ${{ steps.target.outputs.registry }}
+          IMAGE: ${{ steps.repo.outputs.image }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
-               --image-ids imageTag="$VERSION" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::${ECR_REPOSITORY}:${VERSION} already exists; reusing it."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          found=false
+          if [[ $REGISTRY_KIND == ecr ]]; then
+            if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+                 --image-ids imageTag="$VERSION" >/dev/null 2>&1; then
+              found=true
+            fi
+          elif docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            found=true
+          fi
+          echo "exists=${found}" >> "$GITHUB_OUTPUT"
+          if [[ $found == true ]]; then
+            echo "::notice::${IMAGE}:${VERSION} already exists; reusing it."
           fi
 
       - name: Set up QEMU (arm64 emulation)
@@ -100,6 +151,36 @@ jobs:
         if: steps.exists.outputs.exists == 'false'
         run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
+      # Security gate before anything is pushed: build the release candidate
+      # locally (amd64, same Dockerfile and build args), scan it, fail on CRITICAL.
+      - name: Build release candidate for scanning (linux/amd64, not pushed)
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: release-candidate:${{ steps.version.outputs.version }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: |
+            type=gha,scope=release
+            type=gha,scope=ci
+
+      - name: Trivy gate (fail on CRITICAL)
+        if: steps.exists.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: release-candidate:${{ steps.version.outputs.version }}
+          version: v0.76.2
+          severity: CRITICAL
+          ignore-unfixed: false
+          format: table
+          exit-code: "1"
+
       - name: Build and push linux/amd64 + linux/arm64
         id: build
         if: steps.exists.outputs.exists == 'false'
@@ -109,12 +190,19 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.version }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.sha_tag }}
+            ${{ steps.repo.outputs.image }}:${{ steps.version.outputs.version }}
+            ${{ steps.repo.outputs.image }}:${{ steps.version.outputs.sha_tag }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
             GIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
+          # The image config carries the OCI labels from the Dockerfile; the
+          # multi-arch index gets the source annotation too, which is what
+          # links a GHCR package to this repository.
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.description=FastAPI hello service for the DevOps assessment
+            index:org.opencontainers.image.revision=${{ github.sha }}
           # Reuse layers from previous releases and from the PR builds.
           cache-from: |
             type=gha,scope=release
@@ -126,6 +214,8 @@ jobs:
 
       - name: Summary
         env:
+          REGISTRY_KIND: ${{ steps.target.outputs.registry }}
+          IMAGE: ${{ steps.repo.outputs.image }}
           VERSION: ${{ steps.version.outputs.version }}
           SHA_TAG: ${{ steps.version.outputs.sha_tag }}
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -134,10 +224,16 @@ jobs:
             echo "### Image"
             echo "| | |"
             echo "|---|---|"
-            echo "| Repository | \`${ECR_REPOSITORY}\` |"
+            echo "| Registry | ${REGISTRY_KIND^^} |"
+            echo "| Image | \`${IMAGE}\` |"
             echo "| Tags | \`${VERSION}\`, \`${SHA_TAG}\` |"
             echo "| Digest | \`${DIGEST:-unchanged (already pushed)}\` |"
             echo "| Platforms | linux/amd64, linux/arm64 |"
+            echo "| Gate | Trivy: no CRITICAL vulnerabilities |"
+            if [[ $REGISTRY_KIND == ghcr ]]; then
+              echo ""
+              echo "**Deploy skipped:** AWS variables (AWS_REGION, ECR_REPOSITORY, AWS_ECR_PUSH_ROLE_ARN) are not set, so the image was published to GHCR only and there is no EC2 host to deploy to."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   tag:
@@ -161,9 +257,13 @@ jobs:
             -f ref="refs/tags/v${VERSION}" -f sha="${GITHUB_SHA}" >/dev/null
           echo "Tagged ${GITHUB_SHA::7} as v${VERSION}"
 
+  # Deploys exist only for the ECR path: the EC2 hosts pull from ECR with their
+  # instance role. With the GHCR fallback these jobs are skipped (the reason is
+  # in the build job's summary).
   deploy-staging:
     name: Staging
     needs: build
+    if: needs.build.outputs.registry == 'ecr'
     uses: ./.github/workflows/deploy.yml
     permissions:
       contents: read
@@ -178,7 +278,7 @@ jobs:
     # Opt-in (repository variable DEPLOY_PRODUCTION=true) so the pipeline works
     # with only a staging host. The "production" GitHub Environment should
     # require a reviewer: that is the manual approval gate before production.
-    if: vars.DEPLOY_PRODUCTION == 'true'
+    if: vars.DEPLOY_PRODUCTION == 'true' && needs.build.outputs.registry == 'ecr'
     uses: ./.github/workflows/deploy.yml
     permissions:
       contents: read

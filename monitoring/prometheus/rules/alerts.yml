@@ -1,0 +1,158 @@
+# Alerting rules. Each `for` is chosen so that a single bad scrape or a short
+# blip does not page anyone, while a real problem still alerts within minutes.
+# Reasoning per rule: docs/observability.md#alerting.
+
+groups:
+  - name: app
+    rules:
+      - alert: AppDown
+        # 1m = 4 failed scrapes in a row (15s interval): ignores one lost scrape
+        # or a quick container restart, but a dead app is known within ~1 minute.
+        expr: up{job="app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: devops-task-api is down
+          description: Prometheus has failed to scrape {{ $labels.instance }} for more than 1 minute.
+
+      - alert: AppHighErrorRate
+        # >5% of user requests failing (5xx) for 5 minutes. Health probes are
+        # excluded so they can't dilute the ratio, and the traffic guard stops a
+        # single failed request on an idle service from reading as 100%.
+        expr: |
+          (
+              sum(rate(http_errors_total{job="app", path!="/health"}[5m]))
+            /
+              sum(rate(http_requests_total{job="app", path!="/health"}[5m]))
+          ) > 0.05
+          and
+          sum(rate(http_requests_total{job="app", path!="/health"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx error rate: {{ $value | humanizePercentage }}"
+          description: More than 5% of requests have failed with 5xx for 5 minutes. Check the Application dashboard's error logs.
+
+      - alert: AppHighLatencyP95
+        # p95 above 500 ms for 10 minutes: a sustained slowdown, not a GC pause
+        # or a single slow request. Warning only: the service still answers.
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="app", path!="/health"}[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency is {{ $value | humanizeDuration }}"
+          description: The 95th percentile request latency has been above 500 ms for 10 minutes.
+
+  - name: host
+    rules:
+      - alert: HostDiskUsageHigh
+        # 80%: enough headroom to clean up or grow the volume calmly. 10m avoids
+        # alerting on a temporary file (e.g. an image pull or log rotation).
+        # (Parenthesised: comparisons bind tighter than `and`.)
+        expr: |
+          (
+            100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+            > 80
+          )
+          and on (instance, device, mountpoint) node_filesystem_readonly == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is {{ $value | printf \"%.1f\" }}% full"
+          description: Filesystem {{ $labels.mountpoint }} ({{ $labels.device }}) on {{ $labels.instance }} has been above 80% for 10 minutes.
+
+      - alert: HostDiskUsageCritical
+        # 90%: most services start failing writes soon after; shorter `for`.
+        expr: |
+          (
+            100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+            > 90
+          )
+          and on (instance, device, mountpoint) node_filesystem_readonly == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is {{ $value | printf \"%.1f\" }}% full"
+          description: Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} has been above 90% for 5 minutes.
+
+      - alert: HostDiskWillFillIn24Hours
+        # Catches a fast-growing disk long before the static thresholds: the
+        # trend of the last 6h projected 24h ahead goes below zero.
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}[6h], 24 * 3600) < 0
+          and on (instance, device, mountpoint) node_filesystem_readonly == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Disk {{ $labels.mountpoint }} will be full within 24 hours at the current rate
+          description: Based on the last 6 hours, {{ $labels.mountpoint }} on {{ $labels.instance }} runs out of space within a day.
+
+      - alert: HostHighCpuUsage
+        # 90% for 15m: batch jobs and deploys spike CPU briefly; a quarter of an
+        # hour at 90% means the host is undersized or something is spinning.
+        expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage is {{ $value | printf \"%.0f\" }}%"
+          description: CPU on {{ $labels.instance }} has been above 90% for 15 minutes.
+
+      - alert: HostLowMemory
+        # Less than 10% available (page cache already counted as available)
+        # for 10m: the next spike risks the OOM killer.
+        expr: 100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Only {{ $value | printf \"%.1f\" }}% memory available"
+          description: Available memory on {{ $labels.instance }} has been below 10% for 10 minutes.
+
+  - name: containers
+    rules:
+      - alert: ContainerMemoryNearLimit
+        # Working set (what the OOM killer measures) above 90% of the limit for
+        # 5m: one more burst gets the container killed. Unlimited containers
+        # report a limit of 0 and are excluded.
+        expr: |
+          container_memory_working_set_bytes{name!=""}
+            / (container_spec_memory_limit_bytes{name!=""} > 0)
+          > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} uses {{ $value | humanizePercentage }} of its memory limit"
+          description: Container {{ $labels.name }} has been above 90% of its memory limit for 5 minutes. Raise the limit or find the leak.
+
+      - alert: ContainerOomKilled
+        # Any OOM kill is worth knowing about immediately: the container was
+        # restarted and in-flight work was lost.
+        expr: increase(container_oom_events_total{name!=""}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} was OOM-killed"
+          description: Container {{ $labels.name }} hit its memory limit and was killed in the last 5 minutes.
+
+  - name: monitoring
+    rules:
+      - alert: MonitoringTargetDown
+        # A blind spot is a problem too, but not an outage: 5m, warning.
+        expr: up{job!="app"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Monitoring target {{ $labels.job }} is down"
+          description: Prometheus cannot scrape {{ $labels.instance }} ({{ $labels.job }}); its metrics and alerts are missing.

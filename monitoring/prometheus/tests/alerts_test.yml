@@ -1,0 +1,110 @@
+# Unit tests for the alerting rules: promtool test rules monitoring/prometheus/tests/alerts_test.yml
+rule_files:
+  - ../rules/alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: AppDown waits 1 minute, then fires
+    interval: 15s
+    input_series:
+      - series: 'up{job="app", instance="app:8080"}'
+        values: "1 1 0 0 0 0 0 0" # scrapes fail from t=30s
+    alert_rule_test:
+      - eval_time: 45s # failing for 15s: pending, not firing
+        alertname: AppDown
+        exp_alerts: []
+      - eval_time: 1m45s
+        alertname: AppDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: app, instance: "app:8080" }
+            exp_annotations:
+              summary: devops-task-api is down
+              description: Prometheus has failed to scrape app:8080 for more than 1 minute.
+
+  - name: AppHighErrorRate fires at 9% errors
+    interval: 15s
+    input_series:
+      # 4 req/s OK + 0.4 req/s failing = 9.09% errors
+      - series: 'http_requests_total{job="app", path="/", method="GET", status="200"}'
+        values: "0+60x40"
+      - series: 'http_requests_total{job="app", path="/debug/fail", method="GET", status="500"}'
+        values: "0+6x40"
+      - series: 'http_errors_total{job="app", path="/debug/fail", method="GET"}'
+        values: "0+6x40"
+      # health probes must not dilute the ratio
+      - series: 'http_requests_total{job="app", path="/health", method="GET", status="200"}'
+        values: "0+600x40"
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: AppHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "High 5xx error rate: 9.091%"
+              description: More than 5% of requests have failed with 5xx for 5 minutes. Check the Application dashboard's error logs.
+
+  - name: AppHighErrorRate ignores a single failure on an idle service
+    interval: 15s
+    input_series:
+      # 0.067 req/s, every one failing (100%), but below the 0.1 req/s traffic guard
+      - series: 'http_requests_total{job="app", path="/", method="GET", status="500"}'
+        values: "0+1x40"
+      - series: 'http_errors_total{job="app", path="/", method="GET"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: AppHighErrorRate
+        exp_alerts: []
+
+  - name: Disk alerts honour thresholds and skip read-only filesystems
+    interval: 1m
+    input_series:
+      # / is 85% full: warning only
+      - series: 'node_filesystem_avail_bytes{job="node", instance="node-exporter:9100", device="/dev/sda1", mountpoint="/", fstype="ext4"}'
+        values: "15x15"
+      - series: 'node_filesystem_size_bytes{job="node", instance="node-exporter:9100", device="/dev/sda1", mountpoint="/", fstype="ext4"}'
+        values: "100x15"
+      - series: 'node_filesystem_readonly{job="node", instance="node-exporter:9100", device="/dev/sda1", mountpoint="/", fstype="ext4"}'
+        values: "0x15"
+      # a read-only image that is 100% full: must not alert
+      - series: 'node_filesystem_avail_bytes{job="node", instance="node-exporter:9100", device="/dev/loop0", mountpoint="/snap/core", fstype="ext4"}'
+        values: "0x15"
+      - series: 'node_filesystem_size_bytes{job="node", instance="node-exporter:9100", device="/dev/loop0", mountpoint="/snap/core", fstype="ext4"}'
+        values: "100x15"
+      - series: 'node_filesystem_readonly{job="node", instance="node-exporter:9100", device="/dev/loop0", mountpoint="/snap/core", fstype="ext4"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 9m # for: 10m not yet reached
+        alertname: HostDiskUsageHigh
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: HostDiskUsageHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, job: node, instance: "node-exporter:9100", device: /dev/sda1, mountpoint: /, fstype: ext4 }
+            exp_annotations:
+              summary: Disk / is 85.0% full
+              description: Filesystem / (/dev/sda1) on node-exporter:9100 has been above 80% for 10 minutes.
+      - eval_time: 11m
+        alertname: HostDiskUsageCritical
+        exp_alerts: []
+
+  - name: ContainerMemoryNearLimit fires above 90% and ignores unlimited containers
+    interval: 1m
+    input_series:
+      - series: 'container_memory_working_set_bytes{name="devops-task-api"}'
+        values: "251658240x10" # 240 MiB
+      - series: 'container_spec_memory_limit_bytes{name="devops-task-api"}'
+        values: "268435456x10" # 256 MiB -> 93.75%
+      - series: 'container_memory_working_set_bytes{name="no-limit"}'
+        values: "999999999x10"
+      - series: 'container_spec_memory_limit_bytes{name="no-limit"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ContainerMemoryNearLimit
+        exp_alerts:
+          - exp_labels: { severity: warning, name: devops-task-api }
+            exp_annotations:
+              summary: devops-task-api uses 93.75% of its memory limit
+              description: Container devops-task-api has been above 90% of its memory limit for 5 minutes. Raise the limit or find the leak.

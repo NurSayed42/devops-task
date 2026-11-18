@@ -70,6 +70,9 @@ jobs:
       - name: Zero-downtime rolling update and rollback
         run: bash scripts/k8s-rollout-demo.sh 0.2.0 | grep -v "rollout to finish" | tee rollout.txt
 
+      - name: HPA scales out under load
+        run: bash scripts/k8s-hpa-demo.sh 180 | tee hpa.txt
+
       - name: Job summary
         if: always()
         run: |
@@ -81,6 +84,10 @@ jobs:
             echo "### Rolling update and rollback"
             echo '```'
             cat rollout.txt 2>/dev/null || echo "not run"
+            echo '```'
+            echo "### Autoscaling"
+            echo '```'
+            cat hpa.txt 2>/dev/null || echo "not run"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

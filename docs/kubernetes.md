@@ -118,7 +118,7 @@ the NetworkPolicy test has a positive control, so "blocked" can't simply mean "t
 PASS  GET / through the Ingress returns the app's JSON
 PASS  GET /health through the Ingress returns 200
 PASS  at least 2 replicas are available
-# Container hardening (inside devops-task-api-65b7c79568-9j5wq)
+# Container hardening (inside devops-task-api-9b778c76d-49sk7)
 PASS  runs as UID 10001, not root
 PASS  root filesystem is read-only
 PASS  /tmp is writable (memory-backed emptyDir)
@@ -153,9 +153,9 @@ deployment.apps/devops-task-api image updated
 $ kubectl -n devops-task rollout status deployment/devops-task-api --timeout=180s
 deployment "devops-task-api" successfully rolled out
   Responses during the update:
-        62 x HTTP 200  version 0.1.0
-        38 x HTTP 200  version 0.2.0
-    slowest response: 2.160s
+        81 x HTTP 200  version 0.1.0
+        40 x HTTP 200  version 0.2.0
+    slowest response: 1.581s
 
 $ kubectl -n devops-task rollout history deployment/devops-task-api
 REVISION  CHANGE-CAUSE
@@ -170,9 +170,9 @@ deployment.apps/devops-task-api rolled back
 $ kubectl -n devops-task rollout status deployment/devops-task-api --timeout=180s
 deployment "devops-task-api" successfully rolled out
   Responses during the rollback:
-        40 x HTTP 200  version 0.1.0
-        80 x HTTP 200  version 0.2.0
-    slowest response: 2.040s
+        38 x HTTP 200  version 0.1.0
+        69 x HTTP 200  version 0.2.0
+    slowest response: 1.191s
 
 $ kubectl -n devops-task rollout history deployment/devops-task-api
 REVISION  CHANGE-CAUSE
@@ -180,12 +180,12 @@ REVISION  CHANGE-CAUSE
 3         rollout undo to devops-task-api:0.1.0
 
 $ kubectl -n devops-task get pods -o wide
-NAME                               READY   STATUS        AGE     NODE
-devops-task-api-65b7c79568-9j5wq   1/1     Running       78s     devops-task-worker2
-devops-task-api-65b7c79568-gjkmw   1/1     Running       44s     devops-task-worker
-devops-task-api-6fb78488b5-xpjxw   1/1     Terminating   2m18s   devops-task-worker
+NAME                              READY   STATUS        AGE    NODE
+devops-task-api-9b778c76d-d6qnm   1/1     Running       56s    devops-task-worker2
+devops-task-api-9b778c76d-kmm9k   1/1     Running       30s    devops-task-worker
+devops-task-api-9df8f6f8c-qrmkf   1/1     Terminating   2m6s   devops-task-worker
 
-### Result: 225 requests through the Ingress, 0 not answered with 200 (slowest 2.160s)
+### Result: 237 requests through the Ingress, 0 not answered with 200 (slowest 1.581s)
 ```
 
 Both versions answered side by side while pods were swapped, and the old revision came back with
@@ -222,11 +222,10 @@ The first runs were not clean, and the fixes are worth more than the green resul
 
 ```
 Before load:
-  cpu 4% of request (target 70%)   replicas 2 (desired 2)
+  cpu 19% of request (target 70%)   replicas 2 (desired 2)
 Load started (fortio, 16 connections, up to 400 req/s through the Ingress)
-  15s  cpu 14% of request (target 70%)   replicas 2 (desired 2)
-  30s  cpu 326% of request (target 70%)   replicas 2 (desired 4)
-  45s  cpu 492% of request (target 70%)   replicas 4 (desired 4)
+  15s  cpu 283% of request (target 70%)   replicas 2 (desired 4)
+  30s  cpu 395% of request (target 70%)   replicas 4 (desired 4)
 Scaled out from 2 to 4 replicas.
 ```
 
@@ -234,11 +233,11 @@ A full cycle, with load held until the maximum and then stopped (`kubectl get ev
 configured `behavior`: up by 2 at once, down by one per minute only after the 5-minute window.
 
 ```
-08:06:32  New size: 4; reason: cpu resource utilization (percentage of request) above target
-08:07:02  New size: 5; reason: cpu resource utilization (percentage of request) above target
-08:12:19  New size: 4; reason: All metrics below target
-08:13:19  New size: 3; reason: All metrics below target
-08:14:19  New size: 2; reason: All metrics below target
+09:08:49  New size: 4; reason: cpu resource utilization (percentage of request) above target
+09:09:21  New size: 5; reason: cpu resource utilization (percentage of request) above target
+09:14:41  New size: 4; reason: All metrics below target
+09:15:42  New size: 3; reason: All metrics below target
+09:16:42  New size: 2; reason: All metrics below target
 ```
 
 ## CI
@@ -250,10 +249,13 @@ the scripts or the image:
   in strict mode against the Kubernetes 1.36 schemas (11/11 resources valid).
 - **e2e:** installs kind v0.33.0 (checksum-verified), then runs the same `kind-up.sh`,
   `k8s-verify.sh`, `k8s-rollout-demo.sh` and `k8s-hpa-demo.sh` a reviewer would. The outputs go to
-  the job summary, and pods, events and descriptions are dumped on failure.
+  the job summary, and pods, events and descriptions are dumped on failure. The whole job takes
+  about 3.5 minutes on a GitHub runner.
 
-The outputs above were captured on a local kind cluster running Kubernetes v1.31 (kind v0.24, before
-the node image was pinned). CI runs the identical scripts on the pinned v1.36.4.
+The verification, rollout and autoscaling outputs on this page come from a cluster created from
+scratch by `kind-up.sh`, using kind v0.33.0 and the pinned Kubernetes v1.36.4, which are the same
+versions CI uses. The investigation in *How it got to zero* happened earlier on a v1.31 cluster,
+with the same manifests apart from the fixes described there.
 
 ## How this changes for production on EKS
 

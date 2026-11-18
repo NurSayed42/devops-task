@@ -1,3 +1,10 @@
+name: devops-task
+
+# Monitoring/logging stack (Prometheus, Grafana, Loki, Alloy, Node Exporter,
+# cAdvisor). `docker compose up -d app` starts the app on its own.
+include:
+  - docker-compose.monitoring.yml
+
 services:
   app:
     build:
@@ -36,6 +43,8 @@ services:
           memory: 64M
     networks:
       - app-net
+      # Lets Prometheus scrape /metrics over the internal network.
+      - monitoring
 
 networks:
   app-net:

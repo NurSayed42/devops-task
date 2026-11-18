@@ -1,0 +1,117 @@
+# Observability stack. Included by docker-compose.yml, so
+#   docker compose up -d       -> app + everything below
+#   docker compose up -d app   -> the app only
+#
+# Network exposure: only Grafana publishes a port, and only on 127.0.0.1. All
+# other components talk over the "monitoring" network, which is `internal`
+# (no route to the outside world, nothing reachable from the host).
+
+x-common: &common
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # The only container that touches the Docker socket. It exposes a read-only
+  # subset of the Docker API (list/inspect containers, read their logs, /info)
+  # to Alloy and cAdvisor; POST/DELETE, exec, images, volumes... are refused.
+  # Mounting the socket itself into Alloy/cAdvisor would be root-equivalent.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    <<: *common
+    environment:
+      CONTAINERS: 1
+      INFO: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits: { cpus: "0.20", memory: 64M }
+
+  prometheus:
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    <<: *common
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Whichever limit is hit first wins: 15 days of history, at most 1 GB on disk.
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=1GB
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  # Host metrics. Reads the host's /proc, /sys and filesystems through a
+  # read-only bind of / (--path.rootfs); pid: host lets it see host processes.
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    <<: *common
+    command:
+      - --path.rootfs=/host
+      # Only real disks: drop pseudo filesystems (node_exporter's default list
+      # + tmpfs, and 9p = host-folder shares) and Docker/WSL plumbing mounts.
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|erofs|sysfs|tracefs|tmpfs|9p)$$
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containerd/.+|parent-distro|mnt/host)($$|/)
+    pid: host
+    volumes:
+      # On a Linux server add ",rslave" so filesystems mounted later show up;
+      # Docker Desktop's VM root is not a shared mount and rejects it.
+      - /:/host:ro
+    read_only: true
+    cap_drop: [ALL]
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+  # Per-container metrics from cgroups; container names come from the Docker
+  # API through the proxy.
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.61.0@sha256:448ca9b1ce0d3f2eb7563938030908a4b81ddfe959a3fe5e62f691fd4b2cb417
+    <<: *common
+    command:
+      - --docker=tcp://docker-proxy:2375
+      - --docker_only=true
+      - --housekeeping_interval=15s
+      - --enable_metrics=cpu,memory,network,diskIO,oom_event
+      # Keep label cardinality down: only the compose labels we query on.
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project
+    volumes:
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    read_only: true
+    depends_on: [docker-proxy]
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+
+networks:
+  monitoring:
+    name: monitoring
+    internal: true
+
+volumes:
+  prometheus-data:

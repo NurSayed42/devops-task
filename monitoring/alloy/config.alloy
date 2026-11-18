@@ -2,111 +2,111 @@
 // read-only socket proxy), tail its logs, parse them, and ship them to Loki.
 
 discovery.docker "containers" {
-  host             = "tcp://docker-proxy:2375"
-  refresh_interval = "15s"
+	host             = "tcp://docker-proxy:2375"
+	refresh_interval = "15s"
 }
 
 // Labels index streams in Loki, so only a few low-cardinality ones are kept:
 // service (compose service), container, stream (stdout/stderr), plus `level`
 // added below. Container IDs, images, request paths etc. are NOT labels.
 discovery.relabel "containers" {
-  targets = discovery.docker.containers.targets
+	targets = discovery.docker.containers.targets
 
-  rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    target_label  = "service"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
 
-  rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/(.*)"
-    target_label  = "container"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
 
-  rule {
-    source_labels = ["__meta_docker_container_log_stream"]
-    target_label  = "stream"
-  }
+	rule {
+		source_labels = ["__meta_docker_container_log_stream"]
+		target_label  = "stream"
+	}
 }
 
 loki.source.docker "containers" {
-  host          = "tcp://docker-proxy:2375"
-  targets       = discovery.docker.containers.targets
-  relabel_rules = discovery.relabel.containers.rules
-  forward_to    = [loki.process.containers.receiver]
+	host          = "tcp://docker-proxy:2375"
+	targets       = discovery.docker.containers.targets
+	relabel_rules = discovery.relabel.containers.rules
+	forward_to    = [loki.process.containers.receiver]
 }
 
 loki.process "containers" {
-  // The app logs one JSON object per line.
-  stage.match {
-    selector = "{service=\"app\"}"
+	// The app logs one JSON object per line.
+	stage.match {
+		selector = "{service=\"app\"}"
 
-    stage.json {
-      expressions = {
-        level  = "",
-        path   = "",
-        method = "",
-        status = "",
-        ts     = "timestamp",
-      }
-    }
+		stage.json {
+			expressions = {
+				level  = "",
+				path   = "",
+				method = "",
+				status = "",
+				ts     = "timestamp",
+			}
+		}
 
-    // Successful health checks and Prometheus scrapes are ~8 lines/minute of
-    // noise. Failed ones (non-200) are kept.
-    stage.drop {
-      source              = "path,status"
-      separator           = ";"
-      expression          = "^/(health|metrics);200$"
-      drop_counter_reason = "successful_probe"
-    }
+		// Successful health checks and Prometheus scrapes are ~8 lines/minute of
+		// noise. Failed ones (non-200) are kept.
+		stage.drop {
+			source              = "path,status"
+			separator           = ";"
+			expression          = "^/(health|metrics);200$"
+			drop_counter_reason = "successful_probe"
+		}
 
-    // Use the app's own timestamp, not the time Alloy read the line.
-    stage.timestamp {
-      source = "ts"
-      format = "RFC3339Nano"
-    }
+		// Use the app's own timestamp, not the time Alloy read the line.
+		stage.timestamp {
+			source = "ts"
+			format = "RFC3339Nano"
+		}
 
-    // path/method/status: bounded thanks to route templates in the app, but
-    // their combinations would multiply streams. Structured metadata makes them
-    // filterable ({service="app"} | path="/" | status=~"5..") without indexing.
-    stage.structured_metadata {
-      values = {
-        path   = "",
-        method = "",
-        status = "",
-      }
-    }
-  }
+		// path/method/status: bounded thanks to route templates in the app, but
+		// their combinations would multiply streams. Structured metadata makes them
+		// filterable ({service="app"} | path="/" | status=~"5..") without indexing.
+		stage.structured_metadata {
+			values = {
+				path   = "",
+				method = "",
+				status = "",
+			}
+		}
+	}
 
-  // Prometheus, Loki, Grafana, Alloy and node_exporter log logfmt `level=...`.
-  stage.match {
-    selector = "{service=~\"prometheus|loki|grafana|alloy|node-exporter|alertmanager\"}"
+	// Prometheus, Loki, Grafana, Alloy and node_exporter log logfmt `level=...`.
+	stage.match {
+		selector = "{service=~\"prometheus|loki|grafana|alloy|node-exporter|alertmanager\"}"
 
-    stage.logfmt {
-      mapping = { level = "" }
-    }
-  }
+		stage.logfmt {
+			mapping = {level = ""}
+		}
+	}
 
-  // One spelling per level (Prometheus logs INFO, Loki info, the app warning).
-  stage.template {
-    source   = "level"
-    template = "{{ if .Value }}{{ ToLower .Value }}{{ end }}"
-  }
+	// One spelling per level (Prometheus logs INFO, Loki info, the app warning).
+	stage.template {
+		source   = "level"
+		template = "{{ if .Value }}{{ ToLower .Value }}{{ end }}"
+	}
 
-  // ~5 values: the main dimension to filter on, so it is a label.
-  stage.labels {
-    values = { level = "" }
-  }
+	// ~5 values: the main dimension to filter on, so it is a label.
+	stage.labels {
+		values = {level = ""}
+	}
 
-  forward_to = [loki.write.default.receiver]
+	forward_to = [loki.write.default.receiver]
 }
 
 loki.write "default" {
-  endpoint {
-    url = "http://loki:3100/loki/api/v1/push"
-  }
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
 
-  external_labels = {
-    environment = "local",
-  }
+	external_labels = {
+		environment = "local",
+	}
 }

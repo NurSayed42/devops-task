@@ -121,6 +121,11 @@ def run() -> None:
         log_config=None,  # keep our JSON logging
         access_log=False,
         timeout_graceful_shutdown=20,
+        # Keep idle connections open longer than any proxy in front keeps them
+        # (Envoy, AWS ALB: 60s). With uvicorn's default of 5s the app closes a
+        # pooled connection the proxy is about to reuse, and that request fails
+        # with a 502/503 (seen as Envoy "UC" during a rollout test).
+        timeout_keep_alive=65,
         proxy_headers=True,
     )
 

@@ -14,3 +14,4 @@ health_log.txt*
 tfplan
 *.tfplan
 .terraform/
+k8s/overlays/*/secrets.env

@@ -67,6 +67,19 @@ and Containers dashboards, data sources and 11 alert rules are all provisioned f
 Only Grafana (on 127.0.0.1) and the app publish ports. Details, label and threshold reasoning, and
 the error-spike walkthrough: **[docs/observability.md](docs/observability.md)**.
 
+## Kubernetes (kind)
+
+```bash
+bash scripts/kind-up.sh            # kind cluster + Contour + metrics-server + deploy (needs kind >= v0.33)
+bash scripts/k8s-verify.sh         # 13 checks: ingress, non-root, read-only FS, NetworkPolicy, Pod Security, HPA
+bash scripts/k8s-rollout-demo.sh   # zero-downtime rolling update + kubectl rollout undo, under traffic
+curl http://devops-task.localtest.me:8088/
+```
+
+Kustomize base + kind overlay in `k8s/`: a 2-replica Deployment (probes, requests/limits, restricted
+securityContext), Service, Ingress, HPA, PDB and NetworkPolicy. Design notes, command output and the
+production-on-EKS comparison: **[docs/kubernetes.md](docs/kubernetes.md)**.
+
 ## Dockerfile notes
 - **Multi-stage**: builder installs deps into `/install`; runtime copies only that + `app/`.
 - **Base pinned**: `python:3.12.16-alpine3.24@sha256:c5ba3dee…` — version tag for readability, multi-arch index digest for immutability.

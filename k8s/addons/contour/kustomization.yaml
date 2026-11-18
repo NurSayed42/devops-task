@@ -1,0 +1,6 @@
+# Ingress controller: Contour (Envoy data plane), pinned to a release.
+# Chosen over ingress-nginx, which was retired upstream in March 2026.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/projectcontour/contour/v1.33.8/examples/render/contour.yaml

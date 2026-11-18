@@ -17,6 +17,8 @@ health script, and the evidence that each of them works.
 
 **Contents:** [Quick start](#quick-start) ·
 [Running everything](#running-everything) · [Architecture](#architecture) ·
+[Dashboards & incident walkthrough](#observability-dashboards-and-an-incident-walkthrough) ·
+[Kubernetes rollout & EKS](#kubernetes-zero-downtime-rollout-rollback-and-the-eks-path) ·
 [The application](#the-application) · [Design decisions](#design-decisions) ·
 [Deployment & rollback](#deployment--rollback-strategy) · [Security](#security-considerations) ·
 [Deployment evidence](#deployment-evidence-aws) · [AWS cost](#aws-cost-estimate-production) ·
@@ -198,6 +200,130 @@ flowchart LR
   loki --> graf
   am --> graf
 ```
+
+---
+
+## Observability: dashboards and an incident walkthrough
+
+All three dashboards are provisioned from [`monitoring/grafana/dashboards/`](monitoring/grafana/dashboards).
+The screenshots were taken from the running stack during a deliberate error spike (the app was run
+with `FAULT_INJECTION=true` under load).
+
+**Application:** request rate, 5xx error rate, latency p50/p95/p99, and the Loki logs on the same time axis.
+
+![Application dashboard](docs/images/dashboard-application.png)
+
+**Host:** CPU, memory, disk and network from Node Exporter.
+
+![Host dashboard](docs/images/dashboard-host.png)
+
+**Containers:** per-container CPU and memory from cAdvisor, including memory relative to the configured limit.
+
+![Containers dashboard](docs/images/dashboard-containers.png)
+
+### "An error spike appears on the Application dashboard. How do you find the cause using these tools?"
+
+1. **Prometheus: confirm and scope it.**
+   - The *Error rate (5xx) %* panel shows when the spike started and how far it is above the 5%
+     alert line.
+   - Its second series, `sum by (path) (rate(http_errors_total[5m]))`, shows **which route** fails.
+   - *Request rate by route and status* tells whether it's one endpoint or everything. In the demo,
+     `/debug/fail 500` rose while `/ 200` stayed flat.
+   - *Latency p95 by route* shows whether that route is also slow.
+2. **Loki logs panel: see what failed, on the same screen and time axis.**
+   - *Log lines by level* has an `error` bar directly under the spike (shared crosshair).
+   - *Error and warning logs* lists one line per failure, e.g. `GET /debug/fail  unhandled exception`.
+   - Expanding a line shows every JSON field and the traceback
+     (`RuntimeError: fault injected via /debug/fail` in `app/main.py`).
+3. **Structured metadata filter: narrow it down in Explore.** `path`, `method` and `status` are
+   attached to every app log line, so there is no regex over raw text:
+   ```logql
+   {service="app", level="error"} | path="/debug/fail"
+   sum by (path) (count_over_time({service="app"} | status=~"5.." [1m]))
+   ```
+4. **Container metrics: rule out the platform.**
+   - On *Containers*: is `devops-task-api` near its memory limit (OOM risk) or pinned at 100% of its
+     CPU limit (throttling)?
+   - On *Host*: is disk or memory exhausted?
+   - On *Application*: did *Uptime* reset (a crash) or *Version* change (a fresh deploy)?
+5. **Alert: confirm and act.**
+   - `AppHighErrorRate` (5xx above 5% for 5 minutes) goes pending, then firing, and Alertmanager
+     routes it to Discord. It is also visible under Grafana → Alerting. Here it went pending at
+     06:26:56 and fired at 06:32:01.
+   - If the spike began with a new version, roll back (Deploy workflow with the previous version).
+     If it's one route with a clear traceback, fix the code. If a container is at its limit,
+     `ContainerMemoryNearLimit` or `ContainerOomKilled` will have fired too.
+   - The alert resolves on its own once the error rate drops.
+
+More detail on labels, retention and alert thresholds: [docs/observability.md](docs/observability.md).
+
+---
+
+## Kubernetes: zero-downtime rollout, rollback and the EKS path
+
+### Rolling update and `kubectl rollout undo`
+
+[`scripts/k8s-rollout-demo.sh`](scripts/k8s-rollout-demo.sh) sends a request through the Ingress
+every ~50 ms while it rolls the Deployment from `0.1.0` to `0.2.0` and back. Any response other
+than 200 within 5 s fails it. Zero downtime comes from:
+- `maxUnavailable: 0` / `maxSurge: 1` and readiness gating
+- a 10 s `preStop` drain
+- a 65 s app keep-alive
+- ingress retries of transport-level failures
+
+See [how it got to zero](docs/kubernetes.md#how-it-got-to-zero). The transcript below was captured
+on a local kind cluster running Kubernetes v1.31. CI runs the same script on v1.36.4.
+
+```
+$ kubectl -n devops-task set image deployment/devops-task-api api=devops-task-api:0.2.0
+deployment.apps/devops-task-api image updated
+
+$ kubectl -n devops-task rollout status deployment/devops-task-api --timeout=180s
+deployment "devops-task-api" successfully rolled out
+  Responses during the update:
+        62 x HTTP 200  version 0.1.0
+        38 x HTTP 200  version 0.2.0
+
+$ kubectl -n devops-task rollout history deployment/devops-task-api
+REVISION  CHANGE-CAUSE
+1         running devops-task-api:0.1.0
+2         set image devops-task-api:0.2.0
+
+$ kubectl -n devops-task rollout undo deployment/devops-task-api
+deployment.apps/devops-task-api rolled back
+
+$ kubectl -n devops-task rollout status deployment/devops-task-api --timeout=180s
+deployment "devops-task-api" successfully rolled out
+  Responses during the rollback:
+        40 x HTTP 200  version 0.1.0
+        80 x HTTP 200  version 0.2.0
+
+$ kubectl -n devops-task rollout history deployment/devops-task-api
+REVISION  CHANGE-CAUSE
+2         set image devops-task-api:0.2.0
+3         rollout undo to devops-task-api:0.1.0
+
+### Result: 225 requests through the Ingress, 0 not answered with 200 (slowest 2.160s)
+```
+
+Both versions answered side by side during the swap, and `rollout undo` brought revision 1 back as
+revision 3, with no failed request. The full transcript is in
+[docs/kubernetes.md](docs/kubernetes.md#zero-downtime-rolling-update-and-rollback).
+
+### What changes for production on EKS
+
+- **Ingress:** the AWS Load Balancer Controller provisions an ALB from the Ingress (or Gateway API),
+  with TLS from ACM, AWS WAF and external-dns for Route 53, instead of Contour on a hostPort.
+- **Secrets:** the External Secrets Operator syncs values from AWS Secrets Manager or SSM Parameter
+  Store into the same mounted Secret, and EKS envelope-encrypts Secrets with KMS. Nothing is
+  generated from local files.
+- **Node autoscaling:** Karpenter (or Cluster Autoscaler on managed node groups) adds nodes when the
+  HPA's pods don't fit, across three AZs. Zone topology spread and the PDB keep upgrades and drains
+  safe.
+- **IAM for pods:** the `devops-task-api` ServiceAccount maps to an IAM role through IRSA or EKS Pod
+  Identity, scoped to exactly what the app needs. Pods never use the node's role (IMDSv2, hop limit 1).
+- **Full comparison** (images, delivery with GitOps and canaries, network policy, observability):
+  [docs/kubernetes.md](docs/kubernetes.md#how-this-changes-for-production-on-eks).
 
 ---
 

@@ -1,0 +1,93 @@
+name: Kubernetes
+
+# Every change to the manifests, the scripts or the image is deployed to a
+# throwaway kind cluster and exercised end to end, exactly as docs/kubernetes.md
+# tells a reviewer to do it locally.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "scripts/kind-up.sh"
+      - "scripts/k8s-*.sh"
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - ".github/workflows/k8s.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k8s-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  KIND_VERSION: v0.33.0
+  KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+  KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+
+jobs:
+  validate:
+    name: Render & validate manifests (kubeconform)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: kustomize build + kubeconform (strict, Kubernetes 1.36 schemas)
+        run: |
+          # The secret generator needs its (git-ignored) input; values are irrelevant here.
+          cp k8s/overlays/kind/secrets.env.example k8s/overlays/kind/secrets.env
+          kubectl kustomize k8s/overlays/kind > rendered.yaml
+          docker run --rm -i "$KUBECONFORM_IMAGE" -strict -summary -kubernetes-version 1.36.0 < rendered.yaml
+
+  e2e:
+    name: kind e2e (deploy, verify, zero-downtime rollout + rollback)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install kind (pinned, checksum-verified)
+        run: |
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  kind" | sha256sum --check -
+          sudo install -m 0755 kind /usr/local/bin/kind
+          kind version
+          kubectl version --client
+
+      - name: Create cluster, install add-ons, deploy
+        run: bash scripts/kind-up.sh
+
+      - name: Verify routing and security controls
+        run: bash scripts/k8s-verify.sh | tee verify.txt
+
+      - name: Zero-downtime rolling update and rollback
+        run: bash scripts/k8s-rollout-demo.sh 0.2.0 | grep -v "rollout to finish" | tee rollout.txt
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Verification"
+            echo '```'
+            cat verify.txt 2>/dev/null || echo "not run"
+            echo '```'
+            echo "### Rolling update and rollback"
+            echo '```'
+            cat rollout.txt 2>/dev/null || echo "not run"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get pods -A -o wide || true
+          kubectl -n devops-task describe deploy,pods || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -50 || true

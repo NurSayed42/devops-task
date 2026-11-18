@@ -43,33 +43,35 @@ def _route_path(request: Request) -> str:
 @app.middleware("http")
 async def observe_requests(request: Request, call_next):
     start = time.perf_counter()
-    status = 500
+    method = request.method
     try:
         response = await call_next(request)
-        status = response.status_code
-        return response
     except Exception:
-        logger.exception("unhandled exception", extra={"path": request.url.path})
-        raise
-    finally:
-        duration = time.perf_counter() - start
-        path = _route_path(request)
-        method = request.method
-        if path != "/metrics":
-            REQUEST_COUNT.labels(method, path, str(status)).inc()
-            REQUEST_LATENCY.labels(method, path).observe(duration)
-            if status >= 500:
-                ERROR_COUNT.labels(method, path).inc()
-        logger.info(
-            "request completed",
-            extra={
-                "method": method,
-                "path": path,
-                "status": status,
-                "duration_ms": round(duration * 1000, 2),
-                "client_ip": request.client.host if request.client else None,
-            },
-        )
+        # Handled here rather than re-raised: re-raising made uvicorn log the
+        # same failure a second time ("Exception in ASGI application"), so every
+        # error appeared twice in the logs. One structured line, with traceback.
+        logger.exception("unhandled exception", extra={"method": method, "path": _route_path(request)})
+        response = JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+    duration = time.perf_counter() - start
+    path = _route_path(request)
+    status = response.status_code
+    if path != "/metrics":
+        REQUEST_COUNT.labels(method, path, str(status)).inc()
+        REQUEST_LATENCY.labels(method, path).observe(duration)
+        if status >= 500:
+            ERROR_COUNT.labels(method, path).inc()
+    logger.info(
+        "request completed",
+        extra={
+            "method": method,
+            "path": path,
+            "status": status,
+            "duration_ms": round(duration * 1000, 2),
+            "client_ip": request.client.host if request.client else None,
+        },
+    )
+    return response
 
 
 @app.get("/")

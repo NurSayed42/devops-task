@@ -95,6 +95,19 @@ def test_unhandled_exception_is_counted_as_error(failing_route):
     assert REGISTRY.get_sample_value("http_requests_total", {**labels, "status": "500"}) >= 1
 
 
+def test_unhandled_exception_is_logged_once_and_answered_with_500(failing_route, caplog):
+    # Default TestClient re-raises server exceptions: nothing may escape the middleware.
+    with TestClient(app) as c, caplog.at_level(logging.INFO):
+        resp = c.get(failing_route)
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "Internal Server Error"}
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].exc_info is not None
+    assert errors[0].path == failing_route
+
+
 def test_settings_read_from_environment(monkeypatch):
     monkeypatch.setenv("PORT", "9090")
     monkeypatch.setenv("LOG_LEVEL", "debug")

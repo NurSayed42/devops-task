@@ -33,7 +33,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
     APP_VERSION=${APP_VERSION}
 
-# pip is not needed at runtime; removing it shrinks the image and the CVE surface.
+# pip is not needed at runtime. Removing it here does not save bytes (they stay in
+# the base layer), but it is gone from the final filesystem: scanners stop
+# reporting its CVEs and nothing in the container can install packages.
 RUN pip uninstall -y pip \
  && addgroup -S -g 10001 app \
  && adduser -S -D -H -u 10001 -G app app

@@ -103,3 +103,24 @@ def test_settings_read_from_environment(monkeypatch):
 
     expected = Settings(port=9090, log_level="DEBUG", environment="staging", app_version="1.2.3")
     assert get_settings() == expected
+
+
+@pytest.mark.parametrize(("value", "enabled"), [("true", True), ("1", True), ("false", False), ("", False)])
+def test_fault_injection_flag(monkeypatch, value, enabled):
+    monkeypatch.setenv("FAULT_INJECTION", value)
+    assert get_settings().fault_injection is enabled
+
+
+def test_fault_injection_route_absent_by_default(client):
+    assert client.get("/debug/fail").status_code == 404
+
+
+def test_fault_injection_route_returns_500_when_enabled():
+    from app.main import register_fault_injection
+
+    register_fault_injection(app)
+    try:
+        with TestClient(app, raise_server_exceptions=False) as c:
+            assert c.get("/debug/fail").status_code == 500
+    finally:
+        app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) != "/debug/fail"]

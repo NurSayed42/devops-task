@@ -10,6 +10,7 @@ class Settings:
     log_level: str
     environment: str
     app_version: str
+    fault_injection: bool = False
 
 
 def get_settings() -> Settings:
@@ -18,4 +19,5 @@ def get_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         environment=os.getenv("APP_ENV", "development"),
         app_version=os.getenv("APP_VERSION", "0.1.0"),
+        fault_injection=os.getenv("FAULT_INJECTION", "false").lower() in ("1", "true", "yes"),
     )

@@ -93,6 +93,22 @@ async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+def register_fault_injection(target: FastAPI) -> None:
+    """GET /debug/fail raises, to exercise error metrics, logs, dashboards and alerts.
+
+    Only registered when FAULT_INJECTION=true; otherwise the route does not exist (404).
+    """
+
+    @target.get("/debug/fail", include_in_schema=False)
+    async def debug_fail():
+        raise RuntimeError("fault injected via /debug/fail")
+
+
+if settings.fault_injection:
+    register_fault_injection(app)
+    logger.warning("fault injection enabled: GET /debug/fail returns 500")
+
+
 def run() -> None:
     import uvicorn
 

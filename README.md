@@ -8,12 +8,19 @@ health script, and the evidence that each of them works.
 | Step | Where | Evidence |
 |------|-------|----------|
 | 1. App & container | [`app/`](app), [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml) | 15 unit tests (95% coverage); image 76.6 MB; CI smoke-tests health, non-root and SIGTERM |
-| 2. CI/CD | [`.github/workflows/`](.github/workflows), [docs/ci-cd.md](docs/ci-cd.md) | Every PR in this repo went through it; actions pinned by SHA, OIDC only |
-| 3. Terraform | [`terraform/`](terraform), [terraform/README.md](terraform/README.md) | Plans against a real AWS account, mocked `terraform test`, [sandbox apply evidence](#deployment-evidence-aws) |
+| 2. CI/CD | [`.github/workflows/`](.github/workflows), [docs/ci-cd.md](docs/ci-cd.md) | Every PR in this repo went through it; releases publish to GHCR; actions pinned by SHA, OIDC only. **The EC2 deploy has not run** (see below) |
+| 3. Terraform | [`terraform/`](terraform), [terraform/README.md](terraform/README.md) | Plans against a read-only AWS sandbox (applies denied), mocked `terraform test`, [sandbox evidence](#deployment-evidence-aws) |
 | 4. Kubernetes | [`k8s/`](k8s), [docs/kubernetes.md](docs/kubernetes.md) | kind e2e in CI; 0 failed requests over rolling update + `rollout undo` |
 | 5. Observability | [`monitoring/`](monitoring), [docs/observability.md](docs/observability.md) | 3 provisioned dashboards (screenshots), 11 unit-tested alert rules, alert fired end to end |
 | 6. Health script | [`scripts/system_health.sh`](scripts/system_health.sh), [docs/system-health.md](docs/system-health.md) | 34 tests in CI; hardened systemd unit verified under systemd |
 | 7. Documentation | this file + `docs/` | |
+
+**Not done: a deploy to a real EC2 instance.** The only AWS account I had was a read-only AWS
+Workshop Studio sandbox, which has since expired. So the Terraform was planned but not applied
+(apart from one log group). The deploy job of Step 2, with its smoke test and automatic rollback,
+has never run against a real host. Both are complete in the repository. Without AWS, the Terraform
+is checked by mocked `terraform test` for every stack, and the deploy scripts by shellcheck.
+Details and logs: [Deployment evidence](#deployment-evidence-aws).
 
 **Contents:** [Quick start](#quick-start) ·
 [Running everything](#running-everything) · [Architecture](#architecture) ·
@@ -627,7 +634,8 @@ ran the CI gates, passed the Trivy gate on the release candidate, and pushed a m
 
 ## AWS cost estimate (production)
 
-On-demand list prices for us-east-1, rounded, for a month (730 h). They are estimates. Savings
+The task asks for this estimate. Nothing was deployed, so it comes from list prices, not from a
+bill. On-demand list prices for us-east-1, rounded, for a month (730 h). They are estimates. Savings
 Plans would cut EC2 by ~30–40%.
 
 **This design** (one host per environment). Production is priced at t3.small, the size

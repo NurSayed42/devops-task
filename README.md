@@ -7,7 +7,7 @@ health script, and the evidence that each of them works.
 
 | Step | Where | Evidence |
 |------|-------|----------|
-| 1. App & container | [`app/`](app), [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml) | 15 unit tests (95% coverage); image 76.5 MB; CI smoke-tests health, non-root and SIGTERM |
+| 1. App & container | [`app/`](app), [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml) | 15 unit tests (95% coverage); image 76.6 MB; CI smoke-tests health, non-root and SIGTERM |
 | 2. CI/CD | [`.github/workflows/`](.github/workflows), [docs/ci-cd.md](docs/ci-cd.md) | Every PR in this repo went through it; actions pinned by SHA, OIDC only |
 | 3. Terraform | [`terraform/`](terraform), [terraform/README.md](terraform/README.md) | Plans against a real AWS account, mocked `terraform test`, [sandbox apply evidence](#deployment-evidence-aws) |
 | 4. Kubernetes | [`k8s/`](k8s), [docs/kubernetes.md](docs/kubernetes.md) | kind e2e in CI; 0 failed requests over rolling update + `rollout undo` |
@@ -109,6 +109,9 @@ sudo systemctl daemon-reload && sudo systemctl enable --now system-health.timer
 docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" -w /etc/prometheus/tests \
   --entrypoint promtool prom/prometheus:v3.16.0 test rules alerts_test.yml
 ```
+
+In Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front and use `$(pwd -W)` instead of `$PWD`.
+Otherwise Git Bash rewrites `/etc/prometheus/tests` into a Windows path.
 
 **Terraform** ([full guide](terraform/README.md)):
 
@@ -362,13 +365,14 @@ digest**; dependencies built in a separate stage; non-root UID 10001; app code r
 (read-only to the app); pip removed from the runtime filesystem; `HEALTHCHECK`; OCI labels
 (version, revision, created, source).
 
-**Final image size: 76.5 MB uncompressed, ~24 MB compressed** (linux/amd64):
+**Final image size: 76.6 MB uncompressed, ~24 MB compressed** (linux/amd64):
 
 | Layer | Size |
 |-------|------|
 | `python:3.12.16-alpine3.24` base | 56.0 MB |
 | Python dependencies (FastAPI, uvicorn, prometheus-client) | 20.4 MB |
-| App code | 57 kB |
+| Runtime user, pip removed | 57 kB |
+| App code | 33 kB |
 
 (`docker image ls` on Docker Desktop shows ~101 MB because its containerd image store also counts
 the compressed blobs.)
@@ -569,7 +573,9 @@ CloudWatch-agent and SSM-agent policies, and everything outside us-east-1 denied
   - bootstrap: 7 to add (versioned, encrypted, TLS-only state bucket)
   - shared: 5 to add (immutable ECR repo with lifecycle, OIDC provider, push role)
 - The app plan stops where it reads the shared stack's ECR repository and OIDC provider, which could
-  not be created.
+  not be created. Before that, it read the default VPC, its subnets and the AL2023 AMI from the real
+  account and planned the 7 resources that don't depend on them: the log group, the instance role,
+  its SSM policy attachment and instance profile, and the security group with its two rules.
 - **`terraform apply`** of the one app resource the role may create: the staging log group
   `/devops-task/staging/app` with **7-day retention**. Default tags were switched off through a
   local, git-ignored override, because `logs:TagResource` is denied.
@@ -624,7 +630,9 @@ ran the CI gates, passed the Trivy gate on the release candidate, and pushed a m
 On-demand list prices for us-east-1, rounded, for a month (730 h). They are estimates. Savings
 Plans would cut EC2 by ~30–40%.
 
-**This design as built** (one host per environment):
+**This design** (one host per environment). Production is priced at t3.small, the size
+`envs/production.tfvars` recommends for real traffic. The file itself ships t3.micro, to stay in the
+free tier for this task.
 
 | Item | Production | Staging |
 |------|-----------:|--------:|

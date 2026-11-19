@@ -28,7 +28,7 @@ Nothing allows `s3:CreateBucket`, `ec2:RunInstances`, `ec2:CreateSecurityGroup`,
 | EC2 permission dry-runs | `04` | `RunInstances` and `CreateSecurityGroup`: **UnauthorizedOperation** (checked with `--dry-run`, nothing created) |
 | shared init / plan (local backend override, since there is no state bucket) | `05`, `06` | OK: **Plan: 5 to add** (ECR repo + lifecycle policy, GitHub OIDC provider, ECR push role + policy) |
 | shared apply | `07` | **Denied:** `ecr:CreateRepository`, `iam:CreateOpenIDConnectProvider`. The push role and its policy were never attempted, because they depend on both. Nothing created. |
-| app (staging) init / full plan | `08`, `09` | **Fails at plan:** the data sources for the ECR repository and the OIDC provider find nothing, because the shared stack could not be created |
+| app (staging) init / full plan | `08`, `09` | **Fails at plan:** the data sources for the ECR repository and the OIDC provider find nothing, because the shared stack could not be created. Before the error, Terraform read the default VPC, subnets and AMI and planned the 7 resources that don't depend on them ("Plan: 7 to add") |
 | app: `-target=aws_cloudwatch_log_group.app` plan / apply | `10`, `11` | Plan OK (1 to add). Apply **denied**: "CreateLogGroup with Tags… additional permission `logs:TagResource` is required" (the provider's `default_tags`) |
 | same, default tags switched off via a local, git-ignored `provider_override.tf` | `12`, `13` | **Applied:** `aws_cloudwatch_log_group.app` = `/devops-task/staging/app`, retention 7 days (screenshot `14-cloudwatch-log-group.png`) |
 | destroy the log group (`-target`) | `15` | **Denied:** `logs:DeleteLogGroup` ("no identity-based policy allows"). The role can create log groups but not delete them. |

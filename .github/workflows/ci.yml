@@ -230,7 +230,10 @@ jobs:
             GIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
           cache-from: type=gha,scope=ci
-          cache-to: type=gha,scope=ci,mode=max
+          # The cache only saves time, so failing to write it must not fail the build.
+          # A run that starts after its PR was merged gets a token with no writable
+          # cache scope ("cache write denied"); that failed PR #11's build.
+          cache-to: type=gha,scope=ci,mode=max,ignore-error=true
 
       - name: Container smoke test & graceful shutdown
         run: |

@@ -75,6 +75,7 @@ sleep 3
 echo
 echo "### 1. Rolling update to $NEW_TAG (traffic flowing the whole time)"
 start=$(($(wc -l <"$WORK/probe.log") + 1))
+update_start=$start
 run kubectl -n "$NS" set image "$DEPLOY" "api=${NEW_IMAGE}"
 run kubectl -n "$NS" rollout status "$DEPLOY" --timeout=180s
 # Annotated after the rollout, so only the new ReplicaSet records the reason
@@ -89,6 +90,7 @@ run kubectl -n "$NS" rollout history "$DEPLOY"
 echo
 echo "### 2. Roll back with kubectl rollout undo"
 start=$(($(wc -l <"$WORK/probe.log") + 1))
+rollback_start=$start
 run kubectl -n "$NS" rollout undo "$DEPLOY"
 run kubectl -n "$NS" rollout status "$DEPLOY" --timeout=180s
 kubectl -n "$NS" annotate "$DEPLOY" kubernetes.io/change-cause="rollout undo to ${old_image}" --overwrite >/dev/null
@@ -108,4 +110,10 @@ failed=$(awk '$1 != "200"' "$WORK/probe.log" | wc -l)
 slowest=$(awk '$3 > max {max = $3} END {printf "%.3f", max}' "$WORK/probe.log")
 echo
 echo "### Result: $total requests through the Ingress, $failed not answered with 200 (slowest ${slowest}s)"
+if ((failed > 0)); then
+  # Every failure, also those outside the two phases above (warm-up, between them).
+  echo "  Not 200 (request number: status, seconds); the update began at request" \
+    "$update_start, the rollback at request $rollback_start:"
+  awk '$1 != "200" {printf "    %d: HTTP %s, %ss\n", NR, $1, $3}' "$WORK/probe.log" | head -n 50
+fi
 ((failed == 0))

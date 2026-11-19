@@ -196,7 +196,8 @@ every 1 h for critical and 4 h for warning, and resolved alerts are announced. I
 error-rate and latency alerts while `AppDown` fires, and the disk warning while the critical one
 fires. The webhook URL is a secret file (`secrets/alertmanager/discord_webhook_url`). Without it,
 firing alerts are still visible in Grafana (**Alerting → Alert groups**, via the provisioned
-Alertmanager data source).
+Alertmanager data source). Alertmanager then logs one `Notify failed … read webhook_url_file: …
+no such file or directory` error per notification and does not retry it. That error is expected.
 
 Observed end to end in this setup: with ~25% of requests failing, `AppHighErrorRate` went *pending*
 at 06:26:56 and *firing* at 06:32:01 (the 5-minute `for`), reached Alertmanager, and showed up in
@@ -256,6 +257,9 @@ Grafana.
   Mimir or Thanos, and Loki/Tempo on object storage. On Kubernetes, use kube-prometheus-stack.
 - **Grafana's admin password is applied only when its database is created.** Rotate it with
   `grafana cli admin reset-admin-password` (see `secrets/README.md`). Grafana's own entrypoint falls
-  back to admin/admin when the secret file can't be read. When the file is missing, Docker even
-  mounts an empty *directory* in its place. Both happened while testing this setup, so the Compose
-  entrypoint refuses to start Grafana unless the secret is a regular, non-empty file.
+  back to admin/admin when the secret comes out empty: unreadable, or a file holding just a newline.
+  When the file is missing, Docker even mounts an empty *directory* in its place. And a file written
+  in Git Bash on Windows ends in CRLF, so Grafana kept the `\r` and the password shown in the file
+  never logged in. All of these happened while testing this setup. The Compose entrypoint therefore
+  reads the secret itself, strips CR and trailing newlines, and refuses to start Grafana on an empty
+  result. CI runs it against a blank and a CRLF secret.

@@ -207,7 +207,8 @@ jobs:
           cache-from: |
             type=gha,scope=release
             type=gha,scope=ci
-          cache-to: type=gha,scope=release,mode=max
+          # A cache write failure must not block a release (see ci.yml).
+          cache-to: type=gha,scope=release,mode=max,ignore-error=true
           # Supply-chain metadata stored next to the image: build provenance + SBOM.
           provenance: mode=max
           sbom: true

@@ -22,6 +22,10 @@ openssl rand -base64 18 > secrets/grafana_admin_password
 -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | % {[char]$_}) | Set-Content -NoNewline secrets/grafana_admin_password
 ```
 
+Line endings don't matter: Grafana's entrypoint strips a trailing CR/LF (Git Bash's `openssl`
+writes CRLF). A missing or blank file stops Grafana from starting instead of falling back to
+admin/admin.
+
 Keep the file world-readable (the default `0644`): Grafana runs as UID 472 inside the container
 and has to be able to read the bind-mounted file. It is still protected by the folder never leaving
 your machine.

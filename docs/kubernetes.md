@@ -215,6 +215,14 @@ The first runs were not clean, and the fixes are worth more than the green resul
    the retry absorbed the remaining four. Retrying is safe here because the API is read-only. A
    service with non-idempotent POSTs would need idempotency keys before retrying resets.
 
+**A later re-check from a fresh clone: five runs, one not clean.** Four runs had 0 failures,
+including a replay on a newly created cluster and one with all 8 CPUs of the Docker VM saturated.
+One run had 15 of 252 requests not answered with 200. It ran right after the cluster was created,
+while Terraform was downloading its AWS provider on the same laptop. Its status codes were not
+kept, so the cause is unknown. The script now lists every non-200 response and where it fell. A
+repeat would then show whether the client never got a response (`000`, e.g. Docker Desktop's port
+forwarding) or Envoy answered `503`.
+
 ## Autoscaling
 
 [`scripts/k8s-hpa-demo.sh`](../scripts/k8s-hpa-demo.sh) drives load with

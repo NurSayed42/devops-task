@@ -2,11 +2,14 @@
 .github
 .venv
 venv
-__pycache__/
-*.pyc
+# Patterns match from the context root, so ** is needed to reach app/__pycache__.
+**/__pycache__
+**/*.py[cod]
 .pytest_cache
 .ruff_cache
 .coverage
+coverage.xml
+junit.xml
 htmlcov/
 tests/
 requirements-dev.txt

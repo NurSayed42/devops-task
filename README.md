@@ -556,6 +556,14 @@ CloudWatch-agent and SSM-agent policies, and everything outside us-east-1 denied
 | `logs:TagResource` | creating the log group *with* the stack's default tags | AccessDenied |
 | `logs:DeleteLogGroup` | destroy | AccessDenied |
 
+![IAM role WSParticipantRole with its four attached policies](docs/evidence/aws/16-iam-role-permissions.png)
+
+*`WSParticipantRole` has four managed policies (ReadOnlyAccess, ws-default-policy, CloudWatchAgentServerPolicy, AmazonSSMManagedInstanceCore) and no permissions boundary: read-only apart from the agent policies.*
+
+![AWS Workshop Studio event: 8 hours, us-east-1 only](docs/evidence/aws/17-workshop-event.png)
+
+*The sandbox is an AWS Workshop Studio event account: an 8-hour event, accessible in us-east-1 only.*
+
 **What succeeded.**
 - **`terraform plan` against the real account:**
   - bootstrap: 7 to add (versioned, encrypted, TLS-only state bucket)
@@ -645,6 +653,8 @@ The monitoring stack self-hosted on a t3.medium with 50 GB gp3 adds ~$35. EKS in
 - **A real end-to-end AWS run:** apply all three stacks in an account that allows it, set the
   GitHub variables, and attach a release log of the CI deploy plus a forced rollback. The sandbox
   above only allowed plans.
+- **A full app-stack plan against real AWS:** the sandbox expired before it could be taken. The
+  mocked `terraform test` covers that plan (both environments) in CI.
 - **Zero-downtime on AWS:** two instances behind an ALB with HTTPS (ACM), or ECS Fargate rolling
   deploys. Run `terraform plan` on PRs through a read-only OIDC role, with Infracost and scheduled
   drift detection.

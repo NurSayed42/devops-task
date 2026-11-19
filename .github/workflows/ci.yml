@@ -134,6 +134,31 @@ jobs:
             echo "IMG_${svc^^}=$(jq -r ".services.${svc}.image" compose.json)" >> "$GITHUB_ENV"
           done
 
+      - name: Grafana secret guard (fails closed, tolerates CRLF)
+        run: |
+          # Runs the exact entrypoint from Compose against crafted secret files.
+          img=$(jq -r '.services.grafana.image' compose.json)
+          jq -r '.services.grafana.entrypoint[2]' compose.json | sed 's/\$\$/$/g' > guard.sh
+          start() {
+            docker run -d -e GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password \
+              -v "$PWD/$1:/run/secrets/grafana_admin_password:ro" -v "$PWD/guard.sh:/guard.sh:ro" \
+              --entrypoint /bin/sh "$img" /guard.sh
+          }
+          # A secret holding only a newline would leave Grafana on admin/admin: must not start.
+          printf '\n' > blank-secret
+          id=$(start blank-secret)
+          test "$(docker wait "$id")" = 1
+          docker logs "$id" 2>&1 | grep FATAL
+          # A CRLF file (written on Windows) must log in with the password as shown, without the CR.
+          printf 'pass123\r\n' > crlf-secret
+          id=$(start crlf-secret)
+          for _ in $(seq 30); do
+            docker exec "$id" wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec "$id" wget -qO- --header "Authorization: Basic $(printf admin:pass123 | base64)" \
+            http://127.0.0.1:3000/api/user | jq -e '.login == "admin"'
+
       - name: Prometheus config + alert rule unit tests (promtool)
         run: |
           docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" --entrypoint promtool \
